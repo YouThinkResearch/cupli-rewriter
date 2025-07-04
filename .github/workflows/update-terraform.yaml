@@ -19,8 +19,9 @@ jobs:
     # Environment variables required by the Terraform configuration
     env:
       TF_IN_AUTOMATION: "true"
-      TF_VAR_edgecenter_api_token: ${{ secrets.EDGE_API_TOKEN }}
-      TF_VAR_cloudflare_api_token: ${{ secrets.CF_API_TOKEN }}
+      TF_VAR_edgecenter_api_token: ${{ secrets.EDGECENTER_API_TOKEN }}
+      TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      TF_VAR_relay_secret_key: ${{ secrets.RELAY_SECRET_KEY }}
       # Backend credentials
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
