@@ -7,12 +7,14 @@ terraform {
     key    = "relay/terraform.tfstate"
     region = "auto"
 
-    # R2 S3-compatible settings
     skip_credentials_validation = true
     skip_metadata_api_check     = true
     skip_region_validation      = true
+    skip_requesting_account_id  = true
+    skip_s3_checksum            = true
+    use_path_style              = true
 
-    endpoint = "https://5cbd25b113ce377352027b6e84867d15.r2.cloudflarestorage.com"
+    endpoints = { s3 = "https://5cbd25b113ce377352027b6e84867d15.r2.cloudflarestorage.com" }
   }
   # backend "gcs" {
   #   # TODO: change this to an existing bucket in your GCP project
