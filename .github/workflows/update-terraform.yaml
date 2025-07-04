@@ -1,0 +1,61 @@
+name: Renew CDN certificate
+
+on:
+  schedule:
+    # “At 00:00 on Sunday.”
+    - cron: "0 0 * * 0"
+  # Allow manual trigger
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  terraform:
+    name: Terraform apply (edgecenter-relay)
+    # BuildJet runners are faster alternatives to the default GitHub
+    # hosted runners. Feel free to pick a larger SKU if needed.
+    runs-on: buildjet-2vcpu-ubuntu-2204
+
+    # Environment variables required by the Terraform configuration
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_VAR_edgecenter_api_token: ${{ secrets.EDGE_API_TOKEN }}
+      TF_VAR_cloudflare_api_token: ${{ secrets.CF_API_TOKEN }}
+      # Backend credentials
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: 'rewriter/package-lock.json'
+      
+      - name: Install rewriter dependencies
+        working-directory: rewriter
+        run: npm ci
+        
+      - name: Build rewriter
+        working-directory: rewriter
+        run: npm run build
+        
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: latest
+
+      # Initialise Terraform with the remote backend
+      - name: Terraform init
+        working-directory: edgecenter-relay
+        run: terraform init -input=false
+
+      # Perform the apply to renew certificate / sync CDN config. If there are
+      # no changes, Terraform exits with 0 and does nothing.
+      - name: Terraform apply
+        working-directory: edgecenter-relay
+        run: terraform apply -input=false -auto-approve 

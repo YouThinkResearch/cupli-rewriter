@@ -9,7 +9,6 @@ crash.*.log
 
 # Ignore variable files that may contain secrets
 *.auto.tfvars
-terraform.tfvars
 secrets.auto.tfvars
 
 # Ignore credentials and service-account keys
