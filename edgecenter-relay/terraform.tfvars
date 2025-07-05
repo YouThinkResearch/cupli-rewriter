@@ -6,11 +6,11 @@ proxy_host = "fwd.youthink.dev"
 
 # List of hosts to rewrite
 rewritten_hosts = [
-  "go.cup.li",
-  "survey.alchemer.com",
-  "www.surveygizmo.com",
-  "surveygizmolibrary.s3.amazonaws.com",
-  "d3hz8hujpo34t2.cloudfront.net"
+  ["go.cup.li", null],
+  ["survey.alchemer.com", "surveys"],
+  ["www.surveygizmo.com", "gzmo"],
+  ["surveygizmolibrary.s3.amazonaws.com", "gzmos3"],
+  ["d3hz8hujpo34t2.cloudfront.net", "gzmocfr"]
 ]
 
 # Certificate configuration

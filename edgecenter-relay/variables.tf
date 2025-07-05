@@ -12,7 +12,7 @@ variable "cloudflare_api_token" {
 
 variable "rewritten_hosts" {
   description = "List of hosts to rewrite"
-  type        = list(string)
+  type        = list(list(string))
 }
 
 variable "proxy_host" {

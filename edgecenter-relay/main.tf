@@ -19,10 +19,13 @@ locals {
   rewritten_domains = var.rewritten_hosts
 
   # Transform rewritten_domains into the target format
-  transformed_cnames = [
+  transformed_cnames = compact(flatten([
     for domain in local.rewritten_domains :
-    "${replace(domain, ".", "--")}.${var.proxy_host}"
-  ]
+    [
+      "${replace(domain[0], ".", "--")}.${var.proxy_host}",
+      domain[1] != null ? "${domain[1]}.${var.proxy_host}" : null
+    ]
+  ]))
 
   cdn_sites = {
     hub = {
