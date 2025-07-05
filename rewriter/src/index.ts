@@ -7,7 +7,7 @@ const parseRewrittenHosts = (hosts: (string | RewrittenHost)[]): RewrittenHost[]
 		}
 
 		// that's temporairly until changes propagate to the CDN
-		return [host[0], undefined];
+		return host;
 	});
 }
 
