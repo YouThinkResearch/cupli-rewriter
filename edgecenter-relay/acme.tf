@@ -15,7 +15,8 @@ resource "acme_certificate" "le_cert" {
 
     # These map 1:1 to CF environment variables
     config = {
-      CF_DNS_API_TOKEN = var.cloudflare_api_token
+      CF_DNS_API_TOKEN   = var.cloudflare_api_token
+      CLOUDFLARE_ZONE_ID = var.zone_id
     }
   }
 }
