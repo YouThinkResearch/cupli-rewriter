@@ -13,10 +13,11 @@ resource "acme_certificate" "le_cert" {
   dns_challenge {
     provider = "cloudflare"
 
-    # These map 1:1 to CF environment variables
+    # CF_DNS_API_TOKEN = DNS edit permission
+    # CF_ZONE_API_TOKEN = Zone read permission (to find the right zone)
     config = {
-      CF_DNS_API_TOKEN   = var.cloudflare_api_token
-      CLOUDFLARE_ZONE_ID = var.zone_id
+      CF_DNS_API_TOKEN  = var.cloudflare_api_token
+      CF_ZONE_API_TOKEN = var.cloudflare_api_token
     }
   }
 }

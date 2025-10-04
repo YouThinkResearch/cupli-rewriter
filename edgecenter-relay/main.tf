@@ -61,9 +61,12 @@ module "cdn" {
   ssl_automated = false # we bring our own
 }
 
-resource "cloudflare_dns_record" "edgecenter_cname" {
+# Create individual CNAME records for each transformed domain
+resource "cloudflare_dns_record" "edgecenter_cnames" {
+  for_each = toset(local.transformed_cnames)
+
   zone_id = var.zone_id
-  name    = "*.${var.proxy_host}"
+  name    = each.value
   type    = "CNAME"
   content = local.edgecdn_cname
   ttl     = 3600
