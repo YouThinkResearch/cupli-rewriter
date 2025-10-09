@@ -103,6 +103,8 @@ export default async function handleRequest(request: Request, config: Configurat
     }
   }
 
+	upstreamHeaders.set('x-relay-ip-addr', fwdIP)
+
   const req = new Request(upstreamURL.toString(), {
     method: request.method,
     headers: upstreamHeaders,
