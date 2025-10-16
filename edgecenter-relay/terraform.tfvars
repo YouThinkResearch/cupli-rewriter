@@ -1,18 +1,19 @@
 
 
-account_id = "5cbd25b113ce377352027b6e84867d15"
-zone_id    = "b4dc00bd73c7b0de523c3fbd2e1ccd1d"
-proxy_host = "fwd.youthink.dev"
+account_id = "ce0c2881f5d5e766cf80d99473b5f220"
+zone_id    = "55526c5ad53433e15e69e983db213e7b"
+proxy_host = "freesurveycupli.com"
 
 # List of hosts to rewrite
 rewritten_hosts = [
-  ["go.cup.li", null],
-  ["survey.alchemer.com", "surveys"],
+  ["survey.alchemer.com", "@"],
   ["www.surveygizmo.com", "gzmo"],
   ["surveygizmolibrary.s3.amazonaws.com", "gzmos3"],
   ["d3hz8hujpo34t2.cloudfront.net", "gzmocfr"]
 ]
 
 # Certificate configuration
-cert_common_name = "*.fwd.youthink.dev"
-cert_sans        = []
+cert_common_name = "*.freesurveycupli.com"
+cert_sans = [
+  "freesurveycupli.com"
+]

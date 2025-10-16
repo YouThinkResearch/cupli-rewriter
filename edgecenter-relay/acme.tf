@@ -1,6 +1,6 @@
 # Register with Let's Encrypt (account key is generated automatically)
 resource "acme_registration" "reg" {
-  email_address = "team+letsencrypt@youthink.io"
+  email_address = "s.orlov@cup.li"
 }
 
 # Request the certificate using DNS-01 challenge via Cloudflare

@@ -14,7 +14,7 @@ terraform {
     skip_s3_checksum            = true
     use_path_style              = true
 
-    endpoints = { s3 = "https://5cbd25b113ce377352027b6e84867d15.r2.cloudflarestorage.com" }
+    endpoints = { s3 = "https://ce0c2881f5d5e766cf80d99473b5f220.r2.cloudflarestorage.com" }
   }
   # backend "gcs" {
   #   # TODO: change this to an existing bucket in your GCP project

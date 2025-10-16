@@ -11,8 +11,15 @@ variable "cloudflare_api_token" {
 }
 
 variable "rewritten_hosts" {
-  description = "List of hosts to rewrite"
+  description = "List of hosts to rewrite. Format: [[host, alias], ...]. Use '@' as alias for root domain."
   type        = list(list(string))
+
+  validation {
+    condition = length([
+      for host in var.rewritten_hosts : host[1] if host[1] == "@"
+    ]) <= 1
+    error_message = "Only one host can use '@' as alias (root domain mapping)."
+  }
 }
 
 variable "proxy_host" {

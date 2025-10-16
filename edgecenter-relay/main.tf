@@ -18,19 +18,23 @@ locals {
 
   rewritten_domains = var.rewritten_hosts
 
-  # Transform rewritten_domains into the target format
-  transformed_cnames = compact(flatten([
+  # Transform rewritten_domains into the target format (full FQDNs for EdgeCenter CDN)
+  # If an alias is provided, use only the alias; otherwise use the dashed format
+  transformed_cnames = [
     for domain in local.rewritten_domains :
-    [
-      "${replace(domain[0], ".", "--")}.${var.proxy_host}",
-      domain[1] != null ? "${domain[1]}.${var.proxy_host}" : null
-    ]
-  ]))
+    domain[1] != null ? (domain[1] == "@" ? var.proxy_host : "${domain[1]}.${var.proxy_host}") : "${replace(domain[0], ".", "--")}.${var.proxy_host}"
+  ]
+
+  # For Cloudflare DNS records, we need just the subdomain part or "@"
+  cloudflare_dns_names = {
+    for fqdn in local.transformed_cnames :
+    fqdn => fqdn == var.proxy_host ? "@" : trimsuffix(fqdn, ".${var.proxy_host}")
+  }
 
   cdn_sites = {
     hub = {
       cname         = local.transformed_cnames
-      origin_source = "rewritter.youthink.workers.dev"
+      origin_source = "rewritter.cupli.workers.dev"
       description   = ""
       cached_rules = [
         {
@@ -63,10 +67,10 @@ module "cdn" {
 
 # Create individual CNAME records for each transformed domain
 resource "cloudflare_dns_record" "edgecenter_cnames" {
-  for_each = toset(local.transformed_cnames)
+  for_each = local.cloudflare_dns_names
 
   zone_id = var.zone_id
-  name    = each.value
+  name    = each.value # "@" for root, or just subdomain part
   type    = "CNAME"
   content = local.edgecdn_cname
   ttl     = 3600

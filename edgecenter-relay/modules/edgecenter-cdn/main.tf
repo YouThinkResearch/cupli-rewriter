@@ -165,4 +165,6 @@ resource "edgecenter_cdn_rule" "cached_rules" {
       value   = each.value.cache_duration
     }
   }
+
+  depends_on = [edgecenter_cdn_resource.cdn]
 }
