@@ -1,8 +1,12 @@
 locals {
   worker_name = "rewritter"
-  worker_js   = file("${path.module}/../rewriter/dist/index.js")
-  // workaround for https://github.com/cloudflare/terraform-provider-cloudflare/issues/5439#issuecomment-3031284642
-  env_signature = sha256("${var.proxy_host}:${var.relay_secret_key}:${jsonencode(var.rewritten_hosts)}")
+  worker_file = "${path.module}/../rewriter/dist/index.js"
+}
+
+# KV Namespace for IP lookup cache
+resource "cloudflare_workers_kv_namespace" "ip_lookup_cache" {
+  account_id = var.account_id
+  title      = "IP_LOOKUP_CACHE"
 }
 
 resource "cloudflare_workers_script_subdomain" "rewriter" {
@@ -12,56 +16,76 @@ resource "cloudflare_workers_script_subdomain" "rewriter" {
   previews_enabled = false
 }
 
-// v5 is kinda screwed: https://github.com/cloudflare/terraform-provider-cloudflare/issues/5573
-// https://github.com/cloudflare/terraform-provider-cloudflare/issues/5439#issuecomment-3031284642
-resource "cloudflare_workers_script" "rewriter" {
-  account_id         = var.account_id
-  content            = "${local.worker_js}\n// ${local.env_signature}"
-  script_name        = local.worker_name
-  compatibility_date = "2025-05-05"
-  main_module        = "worker.js"
+# Worker resource (replaces cloudflare_workers_script)
+resource "cloudflare_worker" "rewriter" {
+  account_id = var.account_id
+  name       = local.worker_name
+
+  subdomain = {
+    enabled          = true
+    previews_enabled = false
+  }
 
   observability = {
     enabled = true
     logs = {
       invocation_logs = true
-      enabled         = true
     }
   }
+}
+
+# Worker version with code and bindings
+# Note: Changes to bindings will automatically trigger a new version
+resource "cloudflare_worker_version" "rewriter" {
+  account_id = var.account_id
+  worker_id  = cloudflare_worker.rewriter.id
+
+  compatibility_date = "2025-05-05"
+  main_module        = "worker.js"
+
+  modules = [
+    {
+      name         = "worker.js"
+      content_file = local.worker_file
+      content_type = "application/javascript+module"
+    }
+  ]
+
   bindings = [
     {
-      name         = "IP_LOOKUP_CACHE"
       type         = "kv_namespace"
-      namespace_id = "42454b2e1c3547dda01fa78bccfea1a8"
+      name         = "IP_LOOKUP_CACHE"
+      namespace_id = cloudflare_workers_kv_namespace.ip_lookup_cache.id
     },
     {
-      name = "PROXY_HOST"
       type = "plain_text"
+      name = "PROXY_HOST"
       text = var.proxy_host
     },
     {
+      type = "secret_text"
       name = "RELAY_SECRET_KEY"
-      type = "secret_text",
       text = var.relay_secret_key
     },
-    // i'd love to use a json type here, but cf terraform provider is broken
-    // and outputs invalid json in the actual worker config
     {
-      name = "REWRITTEN_HOSTS"
       type = "plain_text"
+      name = "REWRITTEN_HOSTS"
       text = jsonencode(var.rewritten_hosts)
-    },
+    }
   ]
+}
 
-  # lifecycle {
-  #   ignore_changes = [
-  #     etag,
-  #     has_assets,
-  #     has_modules,
-  #     modified_on,
-  #     migrations,
-  #     placement,
-  #     tail_consumers,
-  #   ]
-  # }
+# Deploy the worker version
+resource "cloudflare_workers_deployment" "rewriter" {
+  account_id  = var.account_id
+  script_name = cloudflare_worker.rewriter.name
+
+  strategy = "percentage"
+
+  versions = [
+    {
+      version_id = cloudflare_worker_version.rewriter.id
+      percentage = 100
+    }
+  ]
 }
