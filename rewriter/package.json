@@ -1,23 +1,27 @@
 {
-	"name": "rewriter",
-	"version": "0.0.0",
-	"private": true,
-	"scripts": {
-		"build": "wrangler build",
-		"deploy": "wrangler deploy",
-		"dev": "wrangler dev",
-		"start": "wrangler dev",
-		"test": "vitest",
-		"cf-typegen": "wrangler types"
-	},
-	"devDependencies": {
-		"@cloudflare/vitest-pool-workers": "^0.8.19",
-		"@types/bun": "^1.2.18",
-		"typescript": "^5.5.2",
-		"vitest": "~3.2.0",
-		"wrangler": "^4.22.0"
-	},
-	"dependencies": {
-		"@areabook/client": "^4.0.1"
-	}
+  "name": "rewriter",
+  "type": "module",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "build": "wrangler build",
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "start": "wrangler dev",
+    "test": "vitest",
+    "cf-typegen": "wrangler types",
+    "lint:fix": "eslint --fix"
+  },
+  "dependencies": {
+    "@areabook/client": "^4.0.1"
+  },
+  "devDependencies": {
+    "@antfu/eslint-config": "4.19.0",
+    "@cloudflare/vitest-pool-workers": "^0.8.19",
+    "@types/bun": "^1.2.18",
+    "eslint": "^9.37.0",
+    "typescript": "^5.5.2",
+    "vitest": "~3.2.0",
+    "wrangler": "^4.22.0"
+  }
 }

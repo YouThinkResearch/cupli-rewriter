@@ -1,4 +1,5 @@
-import { lookupIPWithCache } from "./ip-lookup"
+import { CacheInterface } from './cache-interface'
+import { lookupIPWithCache } from './ip-lookup'
 
 const OMITTED_HEADERS = new Set([
   // connection details
@@ -24,7 +25,7 @@ const OMITTED_HEADERS = new Set([
 
 export type RewrittenHost = [host: string, alias?: string]
 
-export type Configuration = {
+export interface Configuration {
   rewrittenHosts: RewrittenHost[]
   proxyHost: string
   relaySecretKey: string
@@ -33,11 +34,11 @@ export type Configuration = {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-export const unserializeHost = (host: string, proxyHost: string, rewrittenHosts: RewrittenHost[]): string | null => {
+export function unserializeHost(host: string, proxyHost: string, rewrittenHosts: RewrittenHost[]): string | null {
   // Check if this is the root proxy host (alias: "@")
   if (host === proxyHost) {
     for (const [originalHost, alias] of rewrittenHosts) {
-      if (alias === "@") {
+      if (alias === '@') {
         return originalHost
       }
     }
@@ -45,13 +46,14 @@ export const unserializeHost = (host: string, proxyHost: string, rewrittenHosts:
   }
 
   const suffix = `.${proxyHost}`
-  if (!host.endsWith(suffix)) return null
+  if (!host.endsWith(suffix))
+    return null
 
   const serializedHost = host.slice(0, -suffix.length)
 
   // First check if it's an alias (excluding "@" which is handled above)
   for (const [originalHost, alias] of rewrittenHosts) {
-    if (alias && alias !== "@" && serializedHost === alias) {
+    if (alias && alias !== '@' && serializedHost === alias) {
       return originalHost
     }
   }
@@ -69,28 +71,30 @@ export const unserializeHost = (host: string, proxyHost: string, rewrittenHosts:
   return null
 }
 
-export const serializeHost = (host: string, proxyHost: string, alias?: string) => {
-  if (alias === "@") return proxyHost
+export function serializeHost(host: string, proxyHost: string, alias?: string) {
+  if (alias === '@')
+    return proxyHost
   return alias ? `${alias}.${proxyHost}` : `${host.replaceAll('.', '--')}.${proxyHost}`
 }
 
 // Replace any Domain attribute (with or without leading dot)
-const rewriteSetCookieHeader = (cookie: string, newDomain: string) =>
-  cookie.replace(/(^|;\s*)domain=\.?[^;]+/i, `$1domain=${newDomain}`)
+function rewriteSetCookieHeader(cookie: string, newDomain: string) {
+  return cookie.replace(/(^|;\s*)domain=[^;]+/i, `$1domain=${newDomain}`)
+}
 
 // real URLs: http://host … https://host … //host
-export const urlHostRegex = (host: string) => {
+export function urlHostRegex(host: string) {
   const escaped = host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   return new RegExp(`(?:https?:\\/\\/|\\/\\/)${escaped}`, 'gi')
 }
 
 // bare host wrapped in quotes: "host"  'host'  `host`
-export const quotedHostRegex = (host: string) => {
+export function quotedHostRegex(host: string) {
   const escaped = host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   return new RegExp(`(?:\"|'|\\\`)${escaped}(?:\"|'|\\\`)`, 'gi')
 }
 
-export default async function handleRequest(request: Request, config: Configuration, env: Env): Promise<Response> {
+export default async function handleRequest(request: Request, config: Configuration, cache: CacheInterface): Promise<Response> {
   const fwdHost = request.headers.get('x-forwarded-host')?.toLowerCase() || ''
   const fwdIP = request.headers.get('x-forwarded-for')?.split(',')[0] || ''
 
@@ -107,9 +111,9 @@ export default async function handleRequest(request: Request, config: Configurat
   const upstreamURL = new URL(request.url)
   upstreamURL.hostname = targetHost // preserve original path & query
 
-  //-----------------------------------------------------------------
+  // -----------------------------------------------------------------
   // Forward the request
-  //-----------------------------------------------------------------
+  // -----------------------------------------------------------------
   const upstreamHeaders = new Headers()
   for (const [name, value] of request.headers) {
     if (!OMITTED_HEADERS.has(name.toLowerCase())) {
@@ -120,7 +124,7 @@ export default async function handleRequest(request: Request, config: Configurat
   const shouldAppendIp = targetHost === 'survey.alchemer.com' && request.method === 'GET'
 
   if (shouldAppendIp) {
-    const ipLookup = await lookupIPWithCache(fwdIP, env.IP_LOOKUP_CACHE)
+    const ipLookup = await lookupIPWithCache(fwdIP, cache)
 
     for (const [key, value] of Object.entries(ipLookup)) {
       const keyName = `rewriter_${key}`
@@ -164,9 +168,11 @@ export default async function handleRequest(request: Request, config: Configurat
       continue
     }
 
-    if (!value) continue
+    if (!value)
+      continue
     // quick path – skip if none of our hosts appear at all (case‑sensitive for perf)
-    if (!config.rewrittenHosts.some(([host]) => value.includes(host))) continue
+    if (!config.rewrittenHosts.some(([host]) => value.includes(host)))
+      continue
 
     let rewritten = value
     for (const [host, alias] of config.rewrittenHosts) {
@@ -178,9 +184,9 @@ export default async function handleRequest(request: Request, config: Configurat
     newHeaders.set(key, rewritten)
   }
 
-  //-----------------------------------------------------------------
+  // -----------------------------------------------------------------
   // Rewrite body when it is textual
-  //-----------------------------------------------------------------
+  // -----------------------------------------------------------------
   const ctype = upstreamResp.headers.get('content-type') || ''
   const isText = /^(text\/|application\/(json|javascript|xml|html))/i.test(ctype)
 
