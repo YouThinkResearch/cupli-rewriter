@@ -5,23 +5,29 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "rewritter",
+	"account_id": "ce0c2881f5d5e766cf80d99473b5f220",
 	"main": "src/index.ts",
 	"compatibility_date": "2025-07-03",
 	"keep_vars": true,
 	"vars": {
 		"REWRITTEN_HOSTS": [
-			"go.cup.li",
 			"survey.alchemer.com",
 			"www.surveygizmo.com",
 			"surveygizmolibrary.s3.amazonaws.com",
 			"d3hz8hujpo34t2.cloudfront.net"
 		],
-		"PROXY_HOST": "fwd.youthink.dev",
+		"PROXY_HOST": "freesurveycupli.com",
 		"RELAY_SECRET_KEY": "p455w0rd-change-me"
 	},
 	"observability": {
 		"enabled": true
-	}
+	},
+	"kv_namespaces": [
+		{
+			"binding": "IP_LOOKUP_CACHE",
+			"id": "42454b2e1c3547dda01fa78bccfea1a8"
+		}
+	]
 	/**
 	 * Smart Placement
 	 * Docs: https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement

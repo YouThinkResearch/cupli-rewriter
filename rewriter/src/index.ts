@@ -23,6 +23,6 @@ export default {
 			rewrittenHosts: parseRewrittenHosts(typeof env.REWRITTEN_HOSTS === "string" ? JSON.parse(env.REWRITTEN_HOSTS) : env.REWRITTEN_HOSTS),
 			proxyHost: env.PROXY_HOST,
 			relaySecretKey: env.RELAY_SECRET_KEY,
-		});
+		}, env);
 	},
 } satisfies ExportedHandler<Env>;

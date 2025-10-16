@@ -30,6 +30,11 @@ resource "cloudflare_workers_script" "rewriter" {
   }
   bindings = [
     {
+      name         = "IP_LOOKUP_CACHE"
+      type         = "kv_namespace"
+      namespace_id = "42454b2e1c3547dda01fa78bccfea1a8"
+    },
+    {
       name = "PROXY_HOST"
       type = "plain_text"
       text = var.proxy_host

@@ -1,3 +1,5 @@
+import { lookupIPWithCache } from "./ip-lookup"
+
 const OMITTED_HEADERS = new Set([
   // connection details
   'x-cdn-node-addr',
@@ -32,14 +34,24 @@ export type Configuration = {
 // Helpers
 // ---------------------------------------------------------------------------
 export const unserializeHost = (host: string, proxyHost: string, rewrittenHosts: RewrittenHost[]): string | null => {
+  // Check if this is the root proxy host (alias: "@")
+  if (host === proxyHost) {
+    for (const [originalHost, alias] of rewrittenHosts) {
+      if (alias === "@") {
+        return originalHost
+      }
+    }
+    return null
+  }
+
   const suffix = `.${proxyHost}`
   if (!host.endsWith(suffix)) return null
 
   const serializedHost = host.slice(0, -suffix.length)
 
-  // First check if it's an alias
+  // First check if it's an alias (excluding "@" which is handled above)
   for (const [originalHost, alias] of rewrittenHosts) {
-    if (alias && serializedHost === alias) {
+    if (alias && alias !== "@" && serializedHost === alias) {
       return originalHost
     }
   }
@@ -57,8 +69,10 @@ export const unserializeHost = (host: string, proxyHost: string, rewrittenHosts:
   return null
 }
 
-export const serializeHost = (host: string, proxyHost: string, alias?: string) =>
-  alias ? `${alias}.${proxyHost}` : `${host.replaceAll('.', '--')}.${proxyHost}`
+export const serializeHost = (host: string, proxyHost: string, alias?: string) => {
+  if (alias === "@") return proxyHost
+  return alias ? `${alias}.${proxyHost}` : `${host.replaceAll('.', '--')}.${proxyHost}`
+}
 
 // Replace any Domain attribute (with or without leading dot)
 const rewriteSetCookieHeader = (cookie: string, newDomain: string) =>
@@ -76,9 +90,9 @@ export const quotedHostRegex = (host: string) => {
   return new RegExp(`(?:\"|'|\\\`)${escaped}(?:\"|'|\\\`)`, 'gi')
 }
 
-export default async function handleRequest(request: Request, config: Configuration): Promise<Response> {
+export default async function handleRequest(request: Request, config: Configuration, env: Env): Promise<Response> {
   const fwdHost = request.headers.get('x-forwarded-host')?.toLowerCase() || ''
-  const fwdIP = request.headers.get('x-cdn-node-addr') || ''
+  const fwdIP = request.headers.get('x-forwarded-for')?.split(',')[0] || ''
 
   if (!fwdHost || !fwdIP || !fwdHost.endsWith(config.proxyHost)) {
     return new Response('Not found', { status: 404 })
@@ -103,7 +117,21 @@ export default async function handleRequest(request: Request, config: Configurat
     }
   }
 
-	upstreamHeaders.set('x-relay-ip-addr', fwdIP)
+  const shouldAppendIp = targetHost === 'survey.alchemer.com' && request.method === 'GET'
+
+  if (shouldAppendIp) {
+    const ipLookup = await lookupIPWithCache(fwdIP, env.IP_LOOKUP_CACHE)
+
+    for (const [key, value] of Object.entries(ipLookup)) {
+      const keyName = `rewriter_${key}`
+      if (value) {
+        upstreamURL.searchParams.delete(keyName)
+        upstreamURL.searchParams.set(keyName, value)
+      }
+    }
+  }
+
+  upstreamHeaders.set('x-relay-ip-addr', fwdIP)
 
   const req = new Request(upstreamURL.toString(), {
     method: request.method,
@@ -146,7 +174,6 @@ export default async function handleRequest(request: Request, config: Configurat
         .replace(urlHostRegex(host), (match) => match.replace(host, serializeHost(host, config.proxyHost, alias)))
         .replace(quotedHostRegex(host), (match) => match.replace(host, serializeHost(host, config.proxyHost, alias)))
         .replace('http://', 'https://')
-        .replace('https://hub.youthink.io/', 'https://hub.ru.youthink.io/')
     }
     newHeaders.set(key, rewritten)
   }
