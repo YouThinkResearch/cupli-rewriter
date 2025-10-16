@@ -1,6 +1,7 @@
 locals {
-  worker_name = "rewritter"
-  worker_file = "${path.module}/../rewriter/dist/index.js"
+  worker_name   = "rewritter"
+  worker_file   = "${path.module}/../rewriter/dist/index.js"
+  env_signature = sha256(file(local.worker_file))
 }
 
 # KV Namespace for IP lookup cache
@@ -41,11 +42,12 @@ resource "cloudflare_worker_version" "rewriter" {
   worker_id  = cloudflare_worker.rewriter.id
 
   compatibility_date = "2025-05-05"
-  main_module        = "worker.js"
+  // a workaround until this is fixed: https://github.com/cloudflare/terraform-provider-cloudflare/issues/6303
+  main_module = "worker-${local.env_signature}.js"
 
   modules = [
     {
-      name         = "worker.js"
+      name         = "worker-${local.env_signature}.js"
       content_file = local.worker_file
       content_type = "application/javascript+module"
     }
