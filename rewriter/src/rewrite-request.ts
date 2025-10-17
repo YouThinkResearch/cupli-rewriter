@@ -148,6 +148,10 @@ export default async function handleRequest(request: Request, config: Configurat
     redirect: 'manual',
   })
 
+  if (upstreamResp.status === 404) {
+    return Response.redirect('https://cup.li', 302)
+  }
+
   const newHeaders = new Headers(upstreamResp.headers)
 
   if (upstreamResp.headers.has('set-cookie')) {

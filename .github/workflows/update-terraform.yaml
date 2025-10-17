@@ -52,11 +52,11 @@ jobs:
 
       # Initialise Terraform with the remote backend
       - name: Terraform init
-        working-directory: edgecenter-relay
+        working-directory: edgecenter-relay-prosto
         run: terraform init -input=false
 
       # Perform the apply to renew certificate / sync CDN config. If there are
       # no changes, Terraform exits with 0 and does nothing.
       - name: Terraform apply
-        working-directory: edgecenter-relay
+        working-directory: edgecenter-relay-prosto
         run: terraform apply -input=false -auto-approve 
