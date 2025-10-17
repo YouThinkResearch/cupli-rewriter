@@ -34,16 +34,23 @@ export async function lookupIPWithCache(ip: string, cache: CacheInterface): Prom
 
   // If not in cache, fetch from API
   const client = getClient()
-  const response = await client.lookupIp(ip)
+  try {
+    const response = await client.lookupIp(ip)
 
-  const result: IPLookupResult = {
-    ip,
-    country: response.country?.name_ru,
-    city: response.city?.name_ru,
-    subdivision: response.subdivision?.name_ru,
+    const result: IPLookupResult = {
+      ip,
+      country: response.country?.name_ru,
+      city: response.city?.name_ru,
+      subdivision: response.subdivision?.name_ru,
+    }
+
+    await cache.put(cacheKey, result)
+    return result
   }
-
-  await cache.put(cacheKey, result)
-
-  return result
+  catch (error) {
+    console.error('Error looking up IP:', error)
+    return {
+      ip,
+    }
+  }
 }
