@@ -7,7 +7,7 @@ locals {
 # KV Namespace for IP lookup cache
 resource "cloudflare_workers_kv_namespace" "ip_lookup_cache" {
   account_id = var.account_id
-  title      = "IP_LOOKUP_CACHE"
+  title      = "IP_LOOKUP_CACHE_${local.worker_name}"
 }
 
 resource "cloudflare_workers_script_subdomain" "rewriter" {
@@ -15,6 +15,8 @@ resource "cloudflare_workers_script_subdomain" "rewriter" {
   script_name      = local.worker_name
   enabled          = true
   previews_enabled = false
+
+  depends_on = [cloudflare_worker.rewriter]
 }
 
 # Worker resource (replaces cloudflare_workers_script)
