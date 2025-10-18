@@ -23,6 +23,8 @@ const OMITTED_HEADERS = new Set([
   'vary',
 ])
 
+const ENABLE_GEOIP_LOOKUP = false
+
 export type RewrittenHost = [host: string, alias?: string]
 
 export interface Configuration {
@@ -124,14 +126,20 @@ export default async function handleRequest(request: Request, config: Configurat
   const shouldAppendIp = targetHost === 'survey.alchemer.com' && request.method === 'GET'
 
   if (shouldAppendIp) {
-    const ipLookup = await lookupIPWithCache(fwdIP, cache)
+    if (ENABLE_GEOIP_LOOKUP) {
+      const ipLookup = await lookupIPWithCache(fwdIP, cache)
 
-    for (const [key, value] of Object.entries(ipLookup)) {
-      const keyName = `rewriter_${key}`
-      if (value) {
-        upstreamURL.searchParams.delete(keyName)
-        upstreamURL.searchParams.set(keyName, value)
+      for (const [key, value] of Object.entries(ipLookup)) {
+        const keyName = `rewriter_${key}`
+        if (value) {
+          upstreamURL.searchParams.delete(keyName)
+          upstreamURL.searchParams.set(keyName, value)
+        }
       }
+    }
+    else {
+      upstreamURL.searchParams.delete('rewriter_ip')
+      upstreamURL.searchParams.set('rewriter_ip', fwdIP)
     }
   }
 
