@@ -1,10 +1,10 @@
 terraform {
   required_version = ">= 0.13.0"
 
-  # Remote state backend – Google Cloud Storage
+  # Remote state backend – Cloudflare R2 (via S3 protocol)
+  # The 'key' parameter will be provided via -backend-config flag
   backend "s3" {
     bucket = "terraform-rewriter-state"
-    key    = "relay-prosto/terraform.tfstate"
     region = "auto"
 
     skip_credentials_validation = true
