@@ -28,6 +28,7 @@ resource "edgecenter_cdn_resource" "cdn" {
     redirect_http_to_https {
       value = true
     }
+
     # Host header configuration
     host_header {
       enabled = true

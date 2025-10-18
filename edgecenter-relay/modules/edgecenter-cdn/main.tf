@@ -25,7 +25,7 @@ resource "edgecenter_cdn_resource" "cdn" {
   description         = var.description
 
   options {
-    redirect_http_to_https = {
+    redirect_http_to_https {
       value = true
     }
 
