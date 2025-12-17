@@ -23,6 +23,8 @@ export default {
   async fetch(request): Promise<Response> {
     const relaySecretKey = request.headers.get('x-relay-secret-key')
 
+    console.log(request.headers, request.url)
+
     return rewriteRequest(request, {
       rewrittenHosts: typeof env.REWRITTEN_HOSTS === 'string' ? JSON.parse(env.REWRITTEN_HOSTS) : env.REWRITTEN_HOSTS,
       proxyHost: env.PROXY_HOST ?? '',
