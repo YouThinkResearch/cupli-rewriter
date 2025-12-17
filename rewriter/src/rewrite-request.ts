@@ -112,6 +112,8 @@ export default async function handleRequest(request: Request, config: Configurat
 
   const upstreamURL = new URL(request.url)
   upstreamURL.hostname = targetHost // preserve original path & query
+  upstreamURL.port = '443'
+  upstreamURL.protocol = 'https:'
 
   // -----------------------------------------------------------------
   // Forward the request
@@ -145,6 +147,7 @@ export default async function handleRequest(request: Request, config: Configurat
 
   upstreamHeaders.set('x-relay-ip-addr', fwdIP)
 
+  console.log('proxying to: ', upstreamURL.toString(), upstreamHeaders)
   const req = new Request(upstreamURL.toString(), {
     method: request.method,
     headers: upstreamHeaders,
