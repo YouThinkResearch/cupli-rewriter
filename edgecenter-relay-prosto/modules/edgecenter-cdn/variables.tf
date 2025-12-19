@@ -4,8 +4,19 @@ variable "cname" {
 }
 
 variable "origin_source" {
-  description = "The origin source domain (e.g., hub.youthink.io)"
+  description = "The origin address (hostname or hostname:port) that EdgeCenter will connect to"
   type        = string
+}
+
+variable "origin_protocol" {
+  description = "Origin protocol (HTTP or HTTPS)"
+  type        = string
+  default     = "HTTP"
+
+  validation {
+    condition     = contains(["HTTP", "HTTPS"], upper(var.origin_protocol))
+    error_message = "origin_protocol must be HTTP or HTTPS."
+  }
 }
 
 variable "origin_group_name" {

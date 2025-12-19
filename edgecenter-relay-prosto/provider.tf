@@ -37,6 +37,14 @@ terraform {
       source  = "cloudflare/cloudflare"
       version = "~> 5.0"
     }
+    railway = {
+      source  = "terraform-community-providers/railway"
+      version = "~> 0.6.1"
+    }
+    http = {
+      source  = "hashicorp/http"
+      version = "~> 3.5"
+    }
     random = {
       source  = "hashicorp/random"
       version = "~> 3.6"
@@ -57,4 +65,9 @@ provider "acme" {
 
 provider "cloudflare" {
   api_token = var.cloudflare_api_token
+}
+
+provider "railway" {
+  # Alternatively set env var RAILWAY_TOKEN.
+  token = var.railway_token
 }

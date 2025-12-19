@@ -50,6 +50,14 @@ terraform destroy -var-file=configs/u-survey.tfvars -var-file=secrets.auto.tfvar
    - prostocupli.com → `relay-prosto/terraform.tfstate`
    - u-survey.ru → `relay-usurvey/terraform.tfstate`
 
+## Railway notes
+
+This deployment uses a **Railway service** (sourced from `https://github.com/YouThinkResearch/cupli-rewriter`) exposed via a **TCP proxy** as the EdgeCenter CDN origin.
+
+You must provide:
+
+- `railway_token` (or set `RAILWAY_TOKEN` in your environment)
+
 ## Adding a New Domain
 
 1. Create `configs/newdomain.tfbackend`:

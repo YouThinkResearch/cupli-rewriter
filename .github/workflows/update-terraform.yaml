@@ -7,7 +7,7 @@ on:
   # Allow manual trigger
   workflow_dispatch:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
 
 jobs:
   terraform:
@@ -21,6 +21,7 @@ jobs:
       TF_IN_AUTOMATION: "true"
       TF_VAR_edgecenter_api_token: ${{ secrets.EDGECENTER_API_TOKEN }}
       TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      TF_VAR_railway_token: ${{ secrets.RAILWAY_TOKEN }}
       TF_VAR_relay_secret_key: ${{ secrets.RELAY_SECRET_KEY }}
       # Backend credentials
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
@@ -29,22 +30,22 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '24'
-          cache: 'npm'
-          cache-dependency-path: 'rewriter/package-lock.json'
-      
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: "rewriter/package-lock.json"
+
       - name: Install rewriter dependencies
         working-directory: rewriter
         run: npm ci
-        
+
       - name: Build rewriter
         working-directory: rewriter
         run: npm run build
-        
+
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
         with:
@@ -59,7 +60,7 @@ jobs:
       # no changes, Terraform exits with 0 and does nothing.
       - name: Terraform apply (relay)
         working-directory: edgecenter-relay
-        run: terraform apply -input=false -auto-approve 
+        run: terraform apply -input=false -auto-approve
 
       # Initialise Terraform with the remote backend
       - name: Terraform init (prosto)

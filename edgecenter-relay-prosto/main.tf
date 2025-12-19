@@ -12,6 +12,8 @@ data "http" "edgecenter_cdn_client" {
 }
 
 locals {
+  worker_name = var.worker_name
+
   # Parse the API response
   cdn_client_info = jsondecode(data.http.edgecenter_cdn_client.response_body)
   edgecdn_cname   = local.cdn_client_info.cname
@@ -33,9 +35,10 @@ locals {
 
   cdn_sites = {
     hub = {
-      cname         = local.transformed_cnames
-      origin_source = "${local.worker_name}.cupli.workers.dev"
-      description   = ""
+      cname           = local.transformed_cnames
+      origin_source   = local.railway_origin_source
+      origin_protocol = "HTTP"
+      description     = ""
       cached_rules = [
         {
           name           = "Static content"
@@ -46,6 +49,64 @@ locals {
       ]
     }
   }
+}
+
+resource "railway_project" "rewriter" {
+  name = "cupli-rewritter"
+}
+
+resource "railway_environment" "production" {
+  name       = "production"
+  project_id = railway_project.rewriter.id
+}
+
+resource "railway_service" "rewriter" {
+  name       = local.worker_name
+  project_id = railway_project.rewriter.id
+  regions = [
+    {
+      num_replicas = 1
+      region       = "europe-west4-drams3a"
+    }
+  ]
+
+  source_repo        = var.railway_source_repo
+  source_repo_branch = var.railway_source_repo_branch
+  root_directory     = var.railway_root_directory
+}
+
+resource "railway_variable_collection" "rewriter_env" {
+  environment_id = railway_environment.production.id
+  service_id     = railway_service.rewriter.id
+
+  variables = [
+    {
+      name  = "PROXY_HOST"
+      value = var.proxy_host
+    },
+    {
+      name  = "RELAY_SECRET_KEY"
+      value = var.relay_secret_key
+    },
+    {
+      name  = "REWRITTEN_HOSTS"
+      value = jsonencode(var.rewritten_hosts)
+    }
+  ]
+}
+
+resource "railway_tcp_proxy" "rewriter" {
+  environment_id   = railway_environment.production.id
+  service_id       = railway_service.rewriter.id
+  application_port = 8080
+
+  depends_on = [railway_variable_collection.rewriter_env]
+}
+
+locals {
+  # Railway TCP proxy exposes {domain}:{proxy_port} externally.
+  railway_origin_host   = railway_tcp_proxy.rewriter.domain
+  railway_origin_source = "${railway_tcp_proxy.rewriter.domain}:${railway_tcp_proxy.rewriter.proxy_port}"
 }
 
 module "cdn" {

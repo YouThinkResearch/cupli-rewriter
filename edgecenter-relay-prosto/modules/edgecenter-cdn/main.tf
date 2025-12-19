@@ -1,3 +1,9 @@
+# Derived values
+locals {
+  # origin_source may be "host" or "host:port"; Host header and SNI must NOT include port.
+  origin_hostname = split(":", var.origin_source)[0]
+}
+
 # Origin Group
 resource "edgecenter_cdn_origingroup" "origins" {
   name                 = var.origin_group_name
@@ -15,7 +21,7 @@ resource "edgecenter_cdn_origingroup" "origins" {
 resource "edgecenter_cdn_resource" "cdn" {
   cname               = var.cname[0]
   origin_group        = edgecenter_cdn_origingroup.origins.id
-  origin_protocol     = "HTTPS"
+  origin_protocol     = upper(var.origin_protocol)
   secondary_hostnames = length(var.cname) > 1 ? slice(var.cname, 1, length(var.cname)) : []
   ssl_enabled         = var.ssl_enabled
   ssl_automated       = var.ssl_automated
@@ -32,7 +38,7 @@ resource "edgecenter_cdn_resource" "cdn" {
     # Host header configuration
     host_header {
       enabled = true
-      value   = var.origin_source
+      value   = local.origin_hostname
     }
 
     # Static request headers - including the relay secret key
@@ -106,9 +112,9 @@ resource "edgecenter_cdn_resource" "cdn" {
 
     # SNI configuration
     sni {
-      enabled         = true
+      enabled         = upper(var.origin_protocol) == "HTTPS"
       sni_type        = "custom"
-      custom_hostname = var.origin_source
+      custom_hostname = local.origin_hostname
     }
 
     # Limit bandwidth configuration
@@ -149,7 +155,7 @@ resource "edgecenter_cdn_rule" "cached_rules" {
   resource_id     = edgecenter_cdn_resource.cdn.id
   name            = each.value.name
   rule            = each.value.rule
-  origin_protocol = "HTTPS"
+  origin_protocol = upper(var.origin_protocol)
   weight          = each.value.weight
   active          = true
 
