@@ -62,16 +62,16 @@ jobs:
         working-directory: edgecenter-relay
         run: terraform apply -input=false -auto-approve
 
-      # Initialise Terraform with the remote backend
-      - name: Terraform init (prosto)
-        working-directory: edgecenter-relay-prosto
-        run: terraform init -input=false -backend-config=configs/prostocupli.tfbackend -reconfigure
+      # # Initialise Terraform with the remote backend
+      # - name: Terraform init (prosto)
+      #   working-directory: edgecenter-relay-prosto
+      #   run: terraform init -input=false -backend-config=configs/prostocupli.tfbackend -reconfigure
 
-      # Perform the apply to renew certificate / sync CDN config. If there are
-      # no changes, Terraform exits with 0 and does nothing.
-      - name: Terraform apply (prosto)
-        working-directory: edgecenter-relay-prosto
-        run: terraform apply -input=false -auto-approve -var-file=configs/prostocupli.tfvars
+      # # Perform the apply to renew certificate / sync CDN config. If there are
+      # # no changes, Terraform exits with 0 and does nothing.
+      # - name: Terraform apply (prosto)
+      #   working-directory: edgecenter-relay-prosto
+      #   run: terraform apply -input=false -auto-approve -var-file=configs/prostocupli.tfvars
 
       # Initialise Terraform with the remote backend
       - name: Terraform init (usurvey)

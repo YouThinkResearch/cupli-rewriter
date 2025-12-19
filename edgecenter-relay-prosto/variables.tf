@@ -34,6 +34,12 @@ variable "railway_root_directory" {
   default     = "/rewriter"
 }
 
+variable "railway_environment_name" {
+  description = "Railway environment name"
+  type        = string
+  default     = "prod"
+}
+
 variable "rewritten_hosts" {
   description = "List of hosts to rewrite. Format: [[host, alias], ...]. Use '@' as alias for root domain."
   type        = list(list(string))

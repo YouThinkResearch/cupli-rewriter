@@ -56,7 +56,7 @@ resource "railway_project" "rewriter" {
 }
 
 resource "railway_environment" "production" {
-  name       = "production"
+  name       = var.railway_environment_name
   project_id = railway_project.rewriter.id
 }
 
