@@ -1,3 +1,4 @@
+import { retry } from 'radash'
 import { CacheInterface } from './cache-interface'
 import { lookupIPWithCache } from './ip-lookup'
 
@@ -228,20 +229,32 @@ export default async function handleRequest(request: Request, config: Configurat
 
   upstreamHeaders.set('x-relay-ip-addr', fwdIP)
 
-  console.log('proxying to: ', upstreamURL.toString(), upstreamHeaders)
-  const req = new Request(upstreamURL.toString(), {
-    method: request.method,
-    headers: upstreamHeaders,
-    redirect: 'manual',
-    body: ['GET', 'HEAD'].includes(request.method) ? undefined : request.body,
-  })
+  console.log('proxying to: ', upstreamURL.toString())
+  const upstreamResp = await retry({ times: 2 }, async () => {
+    const req = new Request(upstreamURL.toString(), {
+      method: request.method,
+      headers: upstreamHeaders,
+      redirect: 'manual',
+      signal: AbortSignal.timeout(3000),
+      body: ['GET', 'HEAD'].includes(request.method) ? undefined : request.body,
+    })
 
-  const upstreamResp = await fetch(req, {
-    redirect: 'manual',
+    // it's okay to retry POST requests here, they are idempotent with alchemer
+    const upstreamResp = await fetch(req, {
+      redirect: 'manual',
+    })
+
+    if (upstreamResp.status === 502 || upstreamResp.status === 503 || upstreamResp.status === 504)
+      throw new Error('upstream error, retrying')
+
+    return upstreamResp
   })
 
   if (upstreamResp.status === 404) {
-    return Response.redirect('https://cup.li', 302)
+    if (request.headers.get('sec-fetch-mode') === 'document')
+      return Response.redirect('https://cup.li', 302)
+    else
+      return new Response(null, { status: 404 })
   }
 
   const newHeaders = new Headers(upstreamResp.headers)
