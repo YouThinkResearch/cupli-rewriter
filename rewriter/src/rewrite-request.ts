@@ -96,6 +96,87 @@ export function quotedHostRegex(host: string) {
   return new RegExp(`(?:\"|'|\\\`)${escaped}(?:\"|'|\\\`)`, 'gi')
 }
 
+function acceptsGzip(acceptEncoding: string | null): boolean {
+  if (!acceptEncoding)
+    return false
+
+  // RFC 9110 style: gzip, br;q=0.8, *;q=0
+  for (const rawToken of acceptEncoding.split(',')) {
+    const token = rawToken.trim()
+    if (!token)
+      continue
+
+    const [coding, ...params] = token.split(';').map(s => s.trim())
+    if (coding.toLowerCase() !== 'gzip')
+      continue
+
+    const qParam = params.find(p => p.toLowerCase().startsWith('q='))
+    if (!qParam)
+      return true
+
+    const qValue = Number.parseFloat(qParam.slice(2))
+    if (!Number.isNaN(qValue) && qValue > 0)
+      return true
+  }
+
+  return false
+}
+
+function addVary(headers: Headers, value: string) {
+  const existing = headers.get('vary')
+  if (!existing) {
+    headers.set('vary', value)
+    return
+  }
+
+  const parts = existing.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
+  if (!parts.includes(value.toLowerCase()))
+    headers.set('vary', `${existing}, ${value}`)
+}
+
+function isBunRuntime(): boolean {
+  // Avoid importing/typing Bun so this code stays valid in non-Bun runtimes (Workers).
+  return typeof (globalThis as any).Bun !== 'undefined'
+}
+
+async function maybeGzipDownstreamBody(opts: {
+  request: Request
+  status: number
+  headers: Headers
+  body: BodyInit | null
+}): Promise<{ body: BodyInit | null, modified: boolean }> {
+  const { request, status, headers, body } = opts
+
+  if (!isBunRuntime())
+    return { body, modified: false }
+
+  const shouldGzip
+    = acceptsGzip(request.headers.get('accept-encoding'))
+    && request.method !== 'HEAD'
+    && status !== 204
+    && status !== 304
+    && status !== 206
+    && !headers.has('content-range')
+    && !headers.get('content-encoding')
+
+  // Keep it simple: only gzip strings (the rewritten text case) to avoid buffering
+  // arbitrary upstream streams/binaries into memory.
+  if (!shouldGzip || typeof body !== 'string')
+    return { body, modified: false }
+
+  const bun = (globalThis as any).Bun
+  const gzip = bun?.gzip ?? bun?.gzipSync
+  if (!gzip)
+    return { body, modified: false }
+
+  const gzipped = await gzip(body)
+  headers.set('content-encoding', 'gzip')
+  addVary(headers, 'accept-encoding')
+  headers.delete('content-length')
+
+  return { body: gzipped, modified: true }
+}
+
 export default async function handleRequest(request: Request, config: Configuration, cache: CacheInterface): Promise<Response> {
   const fwdHost = request.headers.get('x-forwarded-host')?.toLowerCase() || ''
   const fwdIP = request.headers.get('x-forwarded-for')?.split(',')[0] || ''
@@ -203,9 +284,10 @@ export default async function handleRequest(request: Request, config: Configurat
   // Rewrite body when it is textual
   // -----------------------------------------------------------------
   const ctype = upstreamResp.headers.get('content-type') || ''
-  const isText = /^(text\/|application\/(json|javascript|xml|html))/i.test(ctype)
+  const isText = /^(?:text\/|application\/(?:json|javascript|xml|html))/i.test(ctype)
 
   let responseBody: BodyInit | null = upstreamResp.body
+  let bodyWasModified = false
 
   if (isText) {
     let text = await upstreamResp.text()
@@ -216,10 +298,26 @@ export default async function handleRequest(request: Request, config: Configurat
         .replace(quotedHostRegex(host), (match) => match.replace(host, serializeHost(host, config.proxyHost, alias)))
     }
     responseBody = text
+    bodyWasModified = true
   }
 
   // The body may have changed length – remove the original header
   newHeaders.delete('content-length')
+
+  const gzipResult = await maybeGzipDownstreamBody({
+    request,
+    status: upstreamResp.status,
+    headers: newHeaders,
+    body: responseBody,
+  })
+  responseBody = gzipResult.body
+  bodyWasModified = bodyWasModified || gzipResult.modified
+
+  // If we rewrote and/or gzipped, upstream validators are no longer valid
+  if (bodyWasModified) {
+    newHeaders.delete('etag')
+    newHeaders.delete('content-md5')
+  }
 
   return new Response(responseBody, {
     status: upstreamResp.status,
