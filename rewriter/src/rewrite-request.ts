@@ -180,7 +180,7 @@ async function maybeGzipDownstreamBody(opts: {
 
 export default async function handleRequest(request: Request, config: Configuration, cache: CacheInterface): Promise<Response> {
   const fwdHost = request.headers.get('x-forwarded-host')?.toLowerCase() || ''
-  const fwdIP = request.headers.get('x-forwarded-for')?.split(',')[0] || ''
+  const fwdIP = (request.headers.get('x-real-ip') ?? request.headers.get('x-forwarded-for')?.split(',')[0]) || ''
 
   if (!fwdHost || !fwdIP || !fwdHost.endsWith(config.proxyHost)) {
     return new Response('Not found', { status: 404 })
