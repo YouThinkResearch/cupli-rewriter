@@ -1,6 +1,7 @@
 import type { Serve } from 'bun'
 import { env } from 'node:process'
 import { CacheInterface } from './cache-interface'
+import { log } from './logger'
 import { LRUCache } from './lru-cache'
 import rewriteRequest from './rewrite-request'
 
@@ -21,9 +22,7 @@ const cache = new BunLruCache(new LRUCache<string, any>(1000))
 
 export default {
   async fetch(request): Promise<Response> {
-    const relaySecretKey = request.headers.get('x-relay-secret-key')
-
-    console.log(request.headers, request.url)
+    log.debug('incoming request', { url: request.url })
 
     return rewriteRequest(request, {
       rewrittenHosts: typeof env.REWRITTEN_HOSTS === 'string' ? JSON.parse(env.REWRITTEN_HOSTS) : env.REWRITTEN_HOSTS,

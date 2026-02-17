@@ -1,6 +1,12 @@
+import type { TypeId } from 'typeid-js'
 import { retry } from 'radash'
+import { fromString, typeidUnboxed, typeid } from 'typeid-js'
 import { CacheInterface } from './cache-interface'
 import { lookupIPWithCache } from './ip-lookup'
+import { log } from './logger'
+
+const SESSION_COOKIE_NAME = '_rw_sid'
+const SESSION_COOKIE_MAX_AGE = 60 * 60 * 24 * 365 // 1 year
 
 const OMITTED_HEADERS = new Set([
   // connection details
@@ -140,6 +146,31 @@ function isBunRuntime(): boolean {
   return typeof (globalThis as any).Bun !== 'undefined'
 }
 
+function parseSessionId(cookieHeader: string | null): TypeId<'session'> | null {
+  try {
+    if (!cookieHeader)
+      return null
+    for (const part of cookieHeader.split(';')) {
+      const [name, ...rest] = part.split('=')
+      if (name.trim() === SESSION_COOKIE_NAME)
+        return fromString(rest.join('=').trim(), 'session') || null
+    }
+    return null
+  }
+  catch (error) {
+    log.warn('error parsing session id', { error, cookie: cookieHeader })
+    return null
+  }
+}
+
+function stripSessionCookie(cookieHeader: string): string {
+  return cookieHeader
+    .split(';')
+    .filter(part => part.split('=')[0].trim() !== SESSION_COOKIE_NAME)
+    .join(';')
+    .trim()
+}
+
 async function maybeGzipDownstreamBody(opts: {
   request: Request
   status: number
@@ -183,14 +214,26 @@ export default async function handleRequest(request: Request, config: Configurat
   const fwdIP = (request.headers.get('x-real-ip') ?? request.headers.get('x-forwarded-for')?.split(',')[0]) || ''
 
   if (!fwdHost || !fwdIP || !fwdHost.endsWith(config.proxyHost)) {
+    log.warn('request rejected: missing forwarded headers', { fwdHost, ip: fwdIP })
     return new Response('Not found', { status: 404 })
   }
 
   const targetHost = unserializeHost(fwdHost, config.proxyHost, config.rewrittenHosts)
 
   if (!targetHost) {
+    log.warn('request rejected: unknown host', { fwdHost, ip: fwdIP })
     return new Response('Not found', { status: 404 })
   }
+
+  // -----------------------------------------------------------------
+  // Session ID: read from cookie or generate a new one
+  // -----------------------------------------------------------------
+  const cookieHeader = request.headers.get('cookie')
+  const existingSessionId = parseSessionId(cookieHeader)
+  const sessionId = existingSessionId ?? typeidUnboxed('session')
+  const isNewSession = !existingSessionId
+
+  const reqLog = log.child({ sessionId, ip: fwdIP })
 
   const upstreamURL = new URL(request.url)
   upstreamURL.hostname = targetHost // preserve original path & query
@@ -207,11 +250,25 @@ export default async function handleRequest(request: Request, config: Configurat
     }
   }
 
-  const shouldAppendIp = targetHost === 'survey.alchemer.com' && request.method === 'GET'
+  // Strip our session cookie so it is never forwarded upstream
+  const upstreamCookie = upstreamHeaders.get('cookie')
+  if (upstreamCookie) {
+    const cleaned = stripSessionCookie(upstreamCookie)
+    if (cleaned)
+      upstreamHeaders.set('cookie', cleaned)
+    else
+      upstreamHeaders.delete('cookie')
+  }
+
+  const shouldAppendIp = targetHost === 'survey.alchemer.com'
 
   if (shouldAppendIp) {
+    // Always append the session id for Alchemer
+    upstreamURL.searchParams.delete('rewriter_session')
+    upstreamURL.searchParams.set('rewriter_session', sessionId)
+
     if (ENABLE_GEOIP_LOOKUP) {
-      const ipLookup = await lookupIPWithCache(fwdIP, cache)
+      const ipLookup = await lookupIPWithCache(fwdIP, cache, reqLog)
 
       for (const [key, value] of Object.entries(ipLookup)) {
         const keyName = `rewriter_${key}`
@@ -229,7 +286,7 @@ export default async function handleRequest(request: Request, config: Configurat
 
   upstreamHeaders.set('x-relay-ip-addr', fwdIP)
 
-  console.log('proxying to: ', upstreamURL.toString())
+  reqLog.info(`proxy request ${request.url} → ${upstreamURL.toString()}`, { method: request.method, targetHost, path: upstreamURL.pathname, headers: request.headers })
   const upstreamResp = await retry({ times: 2 }, async () => {
     const req = new Request(upstreamURL.toString(), {
       method: request.method,
@@ -244,13 +301,16 @@ export default async function handleRequest(request: Request, config: Configurat
       redirect: 'manual',
     })
 
-    if (upstreamResp.status === 502 || upstreamResp.status === 503 || upstreamResp.status === 504)
+    if (upstreamResp.status === 502 || upstreamResp.status === 503 || upstreamResp.status === 504) {
+      reqLog.warn('upstream error, retrying', { status: upstreamResp.status, targetHost })
       throw new Error('upstream error, retrying')
+    }
 
     return upstreamResp
   })
 
   if (upstreamResp.status === 404) {
+    reqLog.info('upstream 404', { targetHost, path: upstreamURL.pathname })
     if (request.headers.get('sec-fetch-mode') === 'document')
       return Response.redirect('https://cup.li', 302)
     else
@@ -331,6 +391,16 @@ export default async function handleRequest(request: Request, config: Configurat
     newHeaders.delete('etag')
     newHeaders.delete('content-md5')
   }
+
+  // Only set the session cookie when it's a new session
+  if (isNewSession) {
+    newHeaders.append(
+      'set-cookie',
+      `${SESSION_COOKIE_NAME}=${sessionId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_COOKIE_MAX_AGE}`,
+    )
+  }
+
+  reqLog.info('proxy response', { status: upstreamResp.status, targetHost, path: upstreamURL.pathname })
 
   return new Response(responseBody, {
     status: upstreamResp.status,

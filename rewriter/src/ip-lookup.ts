@@ -1,5 +1,6 @@
 import { AreabookClient } from '@areabook/client'
 import { CacheInterface } from './cache-interface'
+import type { Logger } from './logger'
 
 let storedClient: AreabookClient | null = null
 
@@ -23,7 +24,7 @@ interface IPLookupResult {
   subdivision?: string
 }
 
-export async function lookupIPWithCache(ip: string, cache: CacheInterface): Promise<IPLookupResult> {
+export async function lookupIPWithCache(ip: string, cache: CacheInterface, logger: Logger): Promise<IPLookupResult> {
   // Try to get from cache first
   const cacheKey = `ip:${ip}`
   const cached = await cache.get<IPLookupResult>(cacheKey)
@@ -48,7 +49,7 @@ export async function lookupIPWithCache(ip: string, cache: CacheInterface): Prom
     return result
   }
   catch (error) {
-    console.error('Error looking up IP:', error)
+    logger.error('ip lookup failed', { error: String(error) })
     return {
       ip,
     }
