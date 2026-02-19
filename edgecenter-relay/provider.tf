@@ -27,7 +27,7 @@ terraform {
   required_providers {
     edgecenter = {
       source  = "Edge-Center/edgecenter"
-      version = "0.8.5" # pin provider version
+      version = "0.11.4" # pin provider version
     }
     acme = {
       source  = "vancluever/acme"
