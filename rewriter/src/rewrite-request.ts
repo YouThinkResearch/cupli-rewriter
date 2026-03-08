@@ -292,7 +292,10 @@ export default async function handleRequest(request: Request, config: Configurat
       method: request.method,
       headers: upstreamHeaders,
       redirect: 'manual',
-      signal: AbortSignal.timeout(3000),
+      // 30 s: enough for time-to-first-byte on slow upstreams AND for binary
+      // body streams (video chunks, large assets) to complete without being
+      // cut off mid-stream.  3 s was far too aggressive for video streaming.
+      signal: AbortSignal.timeout(30_000),
       body: ['GET', 'HEAD'].includes(request.method) ? undefined : request.body,
     })
 
@@ -332,6 +335,11 @@ export default async function handleRequest(request: Request, config: Configurat
   //     Link, etc.) so that the client stays on the proxy domain
   for (const [key, value] of [...newHeaders]) {
     if (OMITTED_HEADERS.has(key.toLowerCase())) {
+      // content-length is handled below after we know whether the body changed.
+      // Deleting it here would break binary (video/image) pass-through responses.
+      if (key.toLowerCase() === 'content-length')
+        continue
+
       newHeaders.delete(key)
 
       continue
@@ -374,8 +382,11 @@ export default async function handleRequest(request: Request, config: Configurat
     bodyWasModified = true
   }
 
-  // The body may have changed length – remove the original header
-  newHeaders.delete('content-length')
+  // Remove content-length only when the body was rewritten (text responses).
+  // For binary content (video, images, etc.) the upstream value remains valid
+  // and is required for range responses (206) and media streaming to work.
+  if (isText)
+    newHeaders.delete('content-length')
 
   const gzipResult = await maybeGzipDownstreamBody({
     request,

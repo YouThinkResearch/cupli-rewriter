@@ -9,6 +9,7 @@
     "dev": "wrangler dev",
     "start": "wrangler dev",
     "test": "vitest",
+    "test:integration": "bun test test/integration/",
     "cf-typegen": "wrangler types",
     "lint:fix": "eslint --fix"
   },
