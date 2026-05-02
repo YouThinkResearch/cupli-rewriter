@@ -14,8 +14,7 @@ jobs:
     name: Terraform apply (edgecenter-relay)
     # BuildJet runners are faster alternatives to the default GitHub
     # hosted runners. Feel free to pick a larger SKU if needed.
-    runs-on: buildjet-2vcpu-ubuntu-2204
-
+    runs-on: ubuntu-latest
     # Environment variables required by the Terraform configuration
     env:
       TF_IN_AUTOMATION: "true"
