@@ -2,15 +2,31 @@ import { AreabookClient } from '@areabook/client'
 import { CacheInterface } from './cache-interface'
 import type { Logger } from './logger'
 
+const DEFAULT_AREABOOK_URL = 'https://areabook.youthink.dev'
+const DEFAULT_AREABOOK_TOKEN = 'mQHom9QlY4NiquLQRuGET'
+
+// Reads an env var in a runtime-agnostic way. Bun/Node expose `process.env`; Cloudflare
+// Workers don't have `process` by default, so we guard the access and fall back to the
+// defaults there (the Worker keeps its previous hard-coded behaviour).
+function readEnv(name: string): string | undefined {
+  if (typeof process !== 'undefined' && process.env)
+    return process.env[name]
+
+  return undefined
+}
+
 let storedClient: AreabookClient | null = null
 
 function getClient() {
   if (storedClient)
     return storedClient
 
-  storedClient = new AreabookClient(['https://areabook.youthink.dev'], true, {
+  const url = readEnv('AREABOOK_URL') || DEFAULT_AREABOOK_URL
+  const token = readEnv('AREABOOK_TOKEN') || DEFAULT_AREABOOK_TOKEN
+
+  storedClient = new AreabookClient([url], true, {
     headers: {
-      authorization: `Bearer mQHom9QlY4NiquLQRuGET`,
+      authorization: `Bearer ${token}`,
     },
   })
 
