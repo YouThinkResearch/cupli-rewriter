@@ -30,7 +30,7 @@ const OMITTED_HEADERS = new Set([
   'vary',
 ])
 
-const ENABLE_GEOIP_LOOKUP = false
+const ENABLE_GEOIP_LOOKUP = true
 
 export type RewrittenHost = [host: string, alias?: string]
 

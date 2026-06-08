@@ -38,6 +38,8 @@ interface IPLookupResult {
   country?: string
   city?: string
   subdivision?: string
+  latitude?: string
+  longitude?: string
 }
 
 export async function lookupIPWithCache(ip: string, cache: CacheInterface, logger: Logger): Promise<IPLookupResult> {
@@ -59,6 +61,9 @@ export async function lookupIPWithCache(ip: string, cache: CacheInterface, logge
       country: response.country?.name_ru,
       city: response.city?.name_ru,
       subdivision: response.subdivision?.name_ru,
+      // Coordinates dto: x = longitude, y = latitude
+      latitude: response.location?.y != null ? String(response.location.y) : undefined,
+      longitude: response.location?.x != null ? String(response.location.x) : undefined,
     }
 
     await cache.put(cacheKey, result)
