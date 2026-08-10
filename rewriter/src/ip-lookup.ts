@@ -42,6 +42,30 @@ interface IPLookupResult {
   longitude?: string
 }
 
+// AreaBook lookups cost up to ~2 s (measured p90 on cache misses), which used
+// to block every user's first request. Cap the in-request wait; on timeout the
+// request proceeds with IP only while the lookup keeps running in the
+// background to fill the cache for the user's next request.
+const LOOKUP_WAIT_BUDGET_MS = 400
+
+async function fetchAndCache(ip: string, cacheKey: string, cache: CacheInterface, logger: Logger): Promise<IPLookupResult> {
+  const client = getClient()
+  const response = await client.lookupIp(ip)
+
+  const result: IPLookupResult = {
+    ip,
+    country: response.country?.name_ru,
+    city: response.city?.name_ru,
+    subdivision: response.subdivision?.name_ru,
+    // Coordinates dto: x = longitude, y = latitude
+    latitude: response.location?.y != null ? String(response.location.y) : undefined,
+    longitude: response.location?.x != null ? String(response.location.x) : undefined,
+  }
+
+  await cache.put(cacheKey, result)
+  return result
+}
+
 export async function lookupIPWithCache(ip: string, cache: CacheInterface, logger: Logger): Promise<IPLookupResult> {
   // Try to get from cache first
   const cacheKey = `ip:${ip}`
@@ -51,28 +75,16 @@ export async function lookupIPWithCache(ip: string, cache: CacheInterface, logge
     return cached
   }
 
-  // If not in cache, fetch from API
-  const client = getClient()
-  try {
-    const response = await client.lookupIp(ip)
+  const pending = fetchAndCache(ip, cacheKey, cache, logger)
+  // keep the background continuation from becoming an unhandled rejection
+  pending.catch(error => logger.error('ip lookup failed', { error: String(error) }))
 
-    const result: IPLookupResult = {
-      ip,
-      country: response.country?.name_ru,
-      city: response.city?.name_ru,
-      subdivision: response.subdivision?.name_ru,
-      // Coordinates dto: x = longitude, y = latitude
-      latitude: response.location?.y != null ? String(response.location.y) : undefined,
-      longitude: response.location?.x != null ? String(response.location.x) : undefined,
-    }
+  const timeout = new Promise<null>(resolve => setTimeout(() => resolve(null), LOOKUP_WAIT_BUDGET_MS))
 
-    await cache.put(cacheKey, result)
+  const result = await Promise.race([pending, timeout]).catch(() => null)
+  if (result)
     return result
-  }
-  catch (error) {
-    logger.error('ip lookup failed', { error: String(error) })
-    return {
-      ip,
-    }
-  }
+
+  logger.warn('ip lookup slow or failed, proceeding with ip only', { ip })
+  return { ip }
 }
