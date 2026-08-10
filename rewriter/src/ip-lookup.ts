@@ -42,12 +42,6 @@ interface IPLookupResult {
   longitude?: string
 }
 
-// AreaBook lookups cost up to ~2 s (measured p90 on cache misses), which used
-// to block every user's first request. Cap the in-request wait; on timeout the
-// request proceeds with IP only while the lookup keeps running in the
-// background to fill the cache for the user's next request.
-const LOOKUP_WAIT_BUDGET_MS = 400
-
 async function fetchAndCache(ip: string, cacheKey: string, cache: CacheInterface, logger: Logger): Promise<IPLookupResult> {
   const client = getClient()
   const response = await client.lookupIp(ip)
@@ -75,16 +69,14 @@ export async function lookupIPWithCache(ip: string, cache: CacheInterface, logge
     return cached
   }
 
-  const pending = fetchAndCache(ip, cacheKey, cache, logger)
-  // keep the background continuation from becoming an unhandled rejection
-  pending.catch(error => logger.error('ip lookup failed', { error: String(error) }))
-
-  const timeout = new Promise<null>(resolve => setTimeout(() => resolve(null), LOOKUP_WAIT_BUDGET_MS))
-
-  const result = await Promise.race([pending, timeout]).catch(() => null)
-  if (result)
-    return result
-
-  logger.warn('ip lookup slow or failed, proceeding with ip only', { ip })
-  return { ip }
+  // Geo data is required for the survey logic, so the request always waits
+  // for the lookup. The slow tail on cache misses has to be fixed on the
+  // AreaBook side, not by skipping the data.
+  try {
+    return await fetchAndCache(ip, cacheKey, cache, logger)
+  }
+  catch (error) {
+    logger.error('ip lookup failed', { error: String(error) })
+    return { ip }
+  }
 }
