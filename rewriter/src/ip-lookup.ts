@@ -1,6 +1,6 @@
+import type { Logger } from './logger'
 import { AreabookClient } from '@areabook/client'
 import { CacheInterface } from './cache-interface'
-import type { Logger } from './logger'
 
 const DEFAULT_AREABOOK_URL = 'https://areabook.youthink.dev'
 const DEFAULT_AREABOOK_TOKEN = 'mQHom9QlY4NiquLQRuGET'

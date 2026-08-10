@@ -1,9 +1,12 @@
 import type { TypeId } from 'typeid-js'
 import { retry } from 'radash'
-import { fromString, typeidUnboxed, typeid } from 'typeid-js'
+import { fromString, typeidUnboxed } from 'typeid-js'
 import { CacheInterface } from './cache-interface'
+import { fetchViaIP, resolveIPv4 } from './happy-fetch'
 import { lookupIPWithCache } from './ip-lookup'
 import { log } from './logger'
+import { renderRetryPage } from './retry-page'
+import { clearSubmission, isStorableSubmission, loadSubmission, storeSubmission, Submission, SURVEY_PATH_REGEX } from './survey-session'
 
 const SESSION_COOKIE_NAME = '_rw_sid'
 const SESSION_COOKIE_MAX_AGE = 60 * 60 * 24 * 365 // 1 year
@@ -184,12 +187,12 @@ async function maybeGzipDownstreamBody(opts: {
 
   const shouldGzip
     = acceptsGzip(request.headers.get('accept-encoding'))
-    && request.method !== 'HEAD'
-    && status !== 204
-    && status !== 304
-    && status !== 206
-    && !headers.has('content-range')
-    && !headers.get('content-encoding')
+      && request.method !== 'HEAD'
+      && status !== 204
+      && status !== 304
+      && status !== 206
+      && !headers.has('content-range')
+      && !headers.get('content-encoding')
 
   // Keep it simple: only gzip strings (the rewritten text case) to avoid buffering
   // arbitrary upstream streams/binaries into memory.
@@ -225,6 +228,12 @@ export default async function handleRequest(request: Request, config: Configurat
     return new Response('Not found', { status: 404 })
   }
 
+  // Short-circuit browser noise: upstream 404s these anyway, so answering
+  // locally removes them from upstream traffic and from the error rate.
+  const requestPath = new URL(request.url).pathname
+  if (requestPath === '/favicon.ico' || requestPath === '/robots.txt')
+    return new Response(null, { status: 404 })
+
   // -----------------------------------------------------------------
   // Session ID: read from cookie or generate a new one
   // -----------------------------------------------------------------
@@ -239,6 +248,34 @@ export default async function handleRequest(request: Request, config: Configurat
   upstreamURL.hostname = targetHost // preserve original path & query
   upstreamURL.port = '443'
   upstreamURL.protocol = 'https:'
+
+  // sec-fetch-mode is 'navigate' for document navigations; sec-fetch-dest is
+  // 'document'. Fall back to the accept header for clients without sec-fetch.
+  const isNavigation = request.headers.get('sec-fetch-dest') === 'document'
+    || request.headers.get('sec-fetch-mode') === 'navigate'
+    || (request.headers.get('accept') ?? '').includes('text/html')
+
+  const isSurveyPage = targetHost === 'survey.alchemer.com' && SURVEY_PATH_REGEX.test(upstreamURL.pathname)
+
+  // -----------------------------------------------------------------
+  // Survey session reinstatement (see survey-session.ts)
+  // -----------------------------------------------------------------
+  if (isSurveyPage && request.method === 'GET' && upstreamURL.searchParams.has('rewriter_reset')) {
+    await clearSubmission(cache, sessionId, upstreamURL.pathname)
+    const cleanURL = new URL(`https://${fwdHost}${upstreamURL.pathname}${upstreamURL.search}`)
+    cleanURL.searchParams.delete('rewriter_reset')
+    reqLog.info('survey session reset', { path: upstreamURL.pathname })
+    return new Response(null, { status: 302, headers: { location: cleanURL.toString() } })
+  }
+
+  let replayedSubmission: Submission | null = null
+  if (isSurveyPage && request.method === 'GET' && existingSessionId && isNavigation) {
+    replayedSubmission = await loadSubmission(cache, sessionId, upstreamURL.pathname)
+    if (replayedSubmission)
+      reqLog.info('reinstating survey session by replaying stored submission', { path: upstreamURL.pathname })
+  }
+
+  const upstreamMethod = replayedSubmission ? 'POST' : request.method
 
   // -----------------------------------------------------------------
   // Forward the request
@@ -287,34 +324,130 @@ export default async function handleRequest(request: Request, config: Configurat
   upstreamHeaders.set('x-relay-ip-addr', fwdIP)
 
   reqLog.info(`proxy request ${request.url} → ${upstreamURL.toString()}`, { method: request.method, targetHost, path: upstreamURL.pathname, headers: request.headers })
-  const upstreamResp = await retry({ times: 2 }, async () => {
-    const req = new Request(upstreamURL.toString(), {
-      method: request.method,
-      headers: upstreamHeaders,
-      redirect: 'manual',
-      // 30 s: enough for time-to-first-byte on slow upstreams AND for binary
-      // body streams (video chunks, large assets) to complete without being
-      // cut off mid-stream.  3 s was far too aggressive for video streaming.
-      signal: AbortSignal.timeout(30_000),
-      body: ['GET', 'HEAD'].includes(request.method) ? undefined : request.body,
+
+  // Buffer non-GET bodies so retries can resend them: a ReadableStream can only
+  // be consumed once, so streaming `request.body` made every POST retry fail
+  // with "body already used". Survey submissions are small; cap the buffer so a
+  // pathological upload can't blow up memory (those fall back to streaming).
+  const MAX_BUFFERED_BODY = 25 * 1024 * 1024
+  const hasBody = !['GET', 'HEAD'].includes(upstreamMethod)
+  const declaredLength = Number(request.headers.get('content-length') ?? '0')
+  let bufferedBody = hasBody && declaredLength <= MAX_BUFFERED_BODY && !replayedSubmission ? await request.arrayBuffer() : null
+
+  if (replayedSubmission) {
+    bufferedBody = replayedSubmission.body
+    upstreamHeaders.set('content-type', replayedSubmission.contentType)
+    upstreamHeaders.delete('content-length')
+  }
+
+  // Persist survey form submissions BEFORE forwarding so that a failed POST can
+  // be recovered: the retry page navigates back via GET and the stored body is
+  // replayed above.
+  if (isSurveyPage && !replayedSubmission && bufferedBody && isStorableSubmission(request.method, request.headers.get('content-type')))
+    await storeSubmission(cache, sessionId, upstreamURL.pathname, bufferedBody, request.headers.get('content-type')!)
+
+  let attempt = 0
+  let upstreamResp: Response
+  try {
+    upstreamResp = await retry({ times: 4, backoff: i => 200 * 2 ** (i - 1) + Math.random() * 100 }, async () => {
+      attempt++
+      const startedAt = Date.now()
+
+      // Fail fast (10 s) while waiting for response headers so a hung connection
+      // leaves time to retry, but keep the overall 30 s budget so binary body
+      // streams (video chunks, large assets) can finish without being cut off.
+      const ttfbController = new AbortController()
+      const ttfbTimer = setTimeout(() => ttfbController.abort(new Error('upstream TTFB timeout')), 10_000)
+      const signal = AbortSignal.any([AbortSignal.timeout(30_000), ttfbController.signal])
+
+      try {
+        // Happy-eyeballs across edge IPs: the first attempt uses the normal
+        // (pooled) fetch; retries pin a different resolved IP each time so a
+        // single unhealthy CloudFront edge can't eat the whole retry budget.
+        // Only in Bun — Workers can't choose the destination address.
+        let upstreamResp: Response
+        const pinnedIPs = attempt > 1 && isBunRuntime() ? await resolveIPv4(targetHost) : []
+
+        if (pinnedIPs.length > 0) {
+          const ip = pinnedIPs[(attempt - 2) % pinnedIPs.length]
+          reqLog.info('retrying via pinned ip', { targetHost, ip, attempt })
+          upstreamResp = await fetchViaIP({
+            url: upstreamURL,
+            ip,
+            method: upstreamMethod,
+            headers: upstreamHeaders,
+            body: hasBody ? bufferedBody : null,
+            signal,
+          })
+        }
+        else {
+          const req = new Request(upstreamURL.toString(), {
+            method: upstreamMethod,
+            headers: upstreamHeaders,
+            redirect: 'manual',
+            signal,
+            body: hasBody ? (bufferedBody ?? request.body) : undefined,
+          })
+
+          // it's okay to retry POST requests here, they are idempotent with alchemer
+          upstreamResp = await fetch(req, {
+            redirect: 'manual',
+          })
+        }
+
+        if (upstreamResp.status === 502 || upstreamResp.status === 503 || upstreamResp.status === 504) {
+          reqLog.warn('upstream error, retrying', { status: upstreamResp.status, targetHost, attempt, elapsedMs: Date.now() - startedAt })
+          throw new Error('upstream error, retrying')
+        }
+
+        return upstreamResp
+      }
+      catch (error) {
+        if (!(error instanceof Error && error.message === 'upstream error, retrying')) {
+          reqLog.warn('upstream fetch failed, retrying', {
+            targetHost,
+            attempt,
+            elapsedMs: Date.now() - startedAt,
+            error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+          })
+        }
+        throw error
+      }
+      finally {
+        clearTimeout(ttfbTimer)
+      }
+    })
+  }
+  catch (error) {
+    reqLog.warn('all upstream attempts failed', {
+      targetHost,
+      path: upstreamURL.pathname,
+      attempts: attempt,
+      error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
     })
 
-    // it's okay to retry POST requests here, they are idempotent with alchemer
-    const upstreamResp = await fetch(req, {
-      redirect: 'manual',
-    })
-
-    if (upstreamResp.status === 502 || upstreamResp.status === 503 || upstreamResp.status === 504) {
-      reqLog.warn('upstream error, retrying', { status: upstreamResp.status, targetHost })
-      throw new Error('upstream error, retrying')
+    // Page navigations get an auto-retrying interstitial instead of a raw 502.
+    // A failed POST is recoverable: the body was stored above, and the page's
+    // GET navigation replays it through the reinstatement path.
+    if (isNavigation) {
+      const headers = new Headers({
+        'content-type': 'text/html; charset=utf-8',
+        'cache-control': 'no-store',
+        'x-rewriter-error': 'upstream-unavailable',
+      })
+      if (isNewSession)
+        headers.append('set-cookie', `${SESSION_COOKIE_NAME}=${sessionId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_COOKIE_MAX_AGE}`)
+      return new Response(renderRetryPage(), { status: 200, headers })
     }
 
-    return upstreamResp
-  })
+    return new Response('Bad gateway', { status: 502 })
+  }
 
   if (upstreamResp.status === 404) {
     reqLog.info('upstream 404', { targetHost, path: upstreamURL.pathname })
-    if (request.headers.get('sec-fetch-mode') === 'document')
+    // sec-fetch-mode is never 'document' (that's a sec-fetch-dest value), so
+    // this redirect previously never fired; isNavigation checks both headers.
+    if (isNavigation)
       return Response.redirect('https://cup.li', 302)
     else
       return new Response(null, { status: 404 })
@@ -378,6 +511,15 @@ export default async function handleRequest(request: Request, config: Configurat
         .replace(urlHostRegex(host), (match) => match.replace(host, serializeHost(host, config.proxyHost, alias)))
         .replace(quotedHostRegex(host), (match) => match.replace(host, serializeHost(host, config.proxyHost, alias)))
     }
+    // When we restored the session by replaying a stored submission, give the
+    // user an escape hatch to start the survey from scratch.
+    if (replayedSubmission && /text\/html/i.test(ctype)) {
+      const linkParams = new URL(request.url).searchParams
+      linkParams.set('rewriter_reset', '1')
+      const resetLink = `<div style="text-align:center;padding:12px;font:13px/1.4 sans-serif"><a href="${upstreamURL.pathname}?${linkParams.toString()}">Начать опрос заново</a></div>`
+      text = text.includes('</body>') ? text.replace('</body>', `${resetLink}</body>`) : text + resetLink
+    }
+
     responseBody = text
     bodyWasModified = true
   }

@@ -1,3 +1,5 @@
+import type { CacheInterface } from '../../src/cache-interface'
+import type { Configuration } from '../../src/rewrite-request'
 /**
  * Integration tests — real network, no mocks.
  *
@@ -8,8 +10,7 @@
  * Run with:  bun test test/integration/
  */
 import { describe, expect, test } from 'bun:test'
-import type { CacheInterface } from '../../src/cache-interface'
-import handleRequest, { type Configuration } from '../../src/rewrite-request'
+import handleRequest from '../../src/rewrite-request'
 
 // ---------------------------------------------------------------------------
 // Config that mirrors production for the S3 library host

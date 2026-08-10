@@ -1,6 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import handleRequest, { type Configuration } from '../src/rewrite-request'
 import type { CacheInterface } from '../src/cache-interface'
+import type { Configuration } from '../src/rewrite-request'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import handleRequest from '../src/rewrite-request'
 
 // ---------------------------------------------------------------------------
 // Test helpers
