@@ -359,10 +359,22 @@ export default async function handleRequest(request: Request, config: Configurat
   const ATTEMPT_TTFB_MS = 3_000
   const requestStart = Date.now()
 
+  // Manual failure switch for testing the retry/recovery flow end to end:
+  // any URL with ?rewriter_force_error=... skips upstream and takes the
+  // failure path. The retry page strips the parameter before re-navigating,
+  // so the very first retry recovers.
+  const forcedError = upstreamURL.searchParams.get('rewriter_force_error')
+
   let attempt = 0
   let upstreamResp: Response | null = null
   let lastError: unknown
-  while (attempt < MAX_ATTEMPTS) {
+  let attemptsLeft = MAX_ATTEMPTS
+  if (forcedError !== null) {
+    reqLog.warn('error forced via rewriter_force_error', { path: upstreamURL.pathname })
+    lastError = new Error(`forced via rewriter_force_error=${forcedError || '1'}`)
+    attemptsLeft = 0
+  }
+  while (attempt < attemptsLeft) {
     const remaining = REQUEST_DEADLINE_MS - (Date.now() - requestStart)
     // not enough budget left for a meaningful attempt — give up early so the
     // fallback response still beats the EdgeCenter timeout

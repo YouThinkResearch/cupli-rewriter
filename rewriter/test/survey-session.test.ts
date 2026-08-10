@@ -181,6 +181,21 @@ describe('survey session reinstatement', () => {
     expect(resp.status).toBe(502)
   })
 
+  it('rewriter_force_error triggers the retry page without contacting upstream', async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(htmlResponse()))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const resp = await handleRequest(makeRequest(`${SURVEY_PATH}?rewriter_force_error=1`, {
+      extraHeaders: { 'sec-fetch-mode': 'navigate', 'accept': 'text/html' },
+    }), config, cache)
+
+    expect(resp.status).toBe(200)
+    expect(resp.headers.get('x-rewriter-error')).toBe('upstream-unavailable')
+    const html = await resp.text()
+    expect(html).toContain('rewriter_force_error')
+    expect(fetchMock.mock.calls.every(([req]) => !(req as Request).url?.includes?.(UPSTREAM_HOST))).toBe(true)
+  })
+
   it('answers favicon.ico and robots.txt locally without contacting upstream', async () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
