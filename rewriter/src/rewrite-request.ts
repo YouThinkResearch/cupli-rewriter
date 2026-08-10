@@ -342,8 +342,11 @@ export default async function handleRequest(request: Request, config: Configurat
   // Persist survey form submissions BEFORE forwarding so that a failed POST can
   // be recovered: the retry page navigates back via GET and the stored body is
   // replayed above.
-  if (isSurveyPage && !replayedSubmission && bufferedBody && isStorableSubmission(request.method, request.headers.get('content-type')))
+  let submissionStored = !!replayedSubmission
+  if (isSurveyPage && !replayedSubmission && bufferedBody && isStorableSubmission(request.method, request.headers.get('content-type'))) {
     await storeSubmission(cache, sessionId, upstreamURL.pathname, bufferedBody, request.headers.get('content-type')!)
+    submissionStored = true
+  }
 
   // EdgeCenter (in front of us) gives the origin ~10 s to start responding, so
   // OUR response headers must leave within ~8 s or the user gets EdgeCenter's
@@ -455,7 +458,14 @@ export default async function handleRequest(request: Request, config: Configurat
       })
       if (isNewSession)
         headers.append('set-cookie', `${SESSION_COOKIE_NAME}=${sessionId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_COOKIE_MAX_AGE}`)
-      return new Response(renderRetryPage(), { status: 200, headers })
+      return new Response(renderRetryPage({
+        reason: lastError instanceof Error ? lastError.message : String(lastError),
+        attempts: attempt,
+        totalMs: Date.now() - requestStart,
+        sessionId,
+        path: upstreamURL.pathname,
+        hasStoredSubmission: submissionStored,
+      }), { status: 200, headers })
     }
 
     return new Response('Bad gateway', { status: 502 })
