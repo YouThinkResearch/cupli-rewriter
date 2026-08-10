@@ -212,6 +212,9 @@ async function maybeGzipDownstreamBody(opts: {
 }
 
 export default async function handleRequest(request: Request, config: Configuration, cache: CacheInterface): Promise<Response> {
+  const handlerStart = Date.now()
+  let geoipMs = 0
+
   const fwdHost = request.headers.get('x-forwarded-host')?.toLowerCase() || ''
   const fwdIP = (request.headers.get('x-real-ip') ?? request.headers.get('x-forwarded-for')?.split(',')[0]) || ''
 
@@ -304,7 +307,9 @@ export default async function handleRequest(request: Request, config: Configurat
     upstreamURL.searchParams.set('rewriter_session', sessionId)
 
     if (ENABLE_GEOIP_LOOKUP) {
+      const geoipStart = Date.now()
       const ipLookup = await lookupIPWithCache(fwdIP, cache, reqLog)
+      geoipMs = Date.now() - geoipStart
 
       for (const [key, value] of Object.entries(ipLookup)) {
         const keyName = `rewriter_${key}`
@@ -483,6 +488,8 @@ export default async function handleRequest(request: Request, config: Configurat
     return new Response('Bad gateway', { status: 502 })
   }
 
+  const upstreamMs = Date.now() - requestStart
+
   if (upstreamResp.status === 404) {
     reqLog.info('upstream 404', { targetHost, path: upstreamURL.pathname })
     // sec-fetch-mode is never 'document' (that's a sec-fetch-dest value), so
@@ -542,9 +549,14 @@ export default async function handleRequest(request: Request, config: Configurat
 
   let responseBody: BodyInit | null = upstreamResp.body
   let bodyWasModified = false
+  let bodyReadMs = 0
+  let rewriteMs = 0
 
   if (isText) {
+    const bodyReadStart = Date.now()
     let text = await upstreamResp.text()
+    bodyReadMs = Date.now() - bodyReadStart
+    const rewriteStart = Date.now()
     // todo this might has performance issues, we might need to concat hosts into a single regex
     for (const [host, alias] of config.rewrittenHosts) {
       text = text
@@ -562,6 +574,7 @@ export default async function handleRequest(request: Request, config: Configurat
 
     responseBody = text
     bodyWasModified = true
+    rewriteMs = Date.now() - rewriteStart
   }
 
   // Remove content-length only when the body was rewritten (text responses).
@@ -593,7 +606,21 @@ export default async function handleRequest(request: Request, config: Configurat
     )
   }
 
-  reqLog.info('proxy response', { status: upstreamResp.status, targetHost, path: upstreamURL.pathname })
+  // Timing breakdown to locate where TTFB is actually spent:
+  // geoipMs — ip lookup (incl. AreaBook call on cache miss), upstreamMs — all
+  // fetch attempts to headers, bodyReadMs — downloading the text body,
+  // rewriteMs — regex host rewriting, totalMs — the whole handler.
+  reqLog.info('proxy response', {
+    status: upstreamResp.status,
+    targetHost,
+    path: upstreamURL.pathname,
+    attempt,
+    geoipMs,
+    upstreamMs,
+    bodyReadMs,
+    rewriteMs,
+    totalMs: Date.now() - handlerStart,
+  })
 
   return new Response(responseBody, {
     status: upstreamResp.status,
