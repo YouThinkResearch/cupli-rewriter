@@ -1,5 +1,4 @@
 import type { TypeId } from 'typeid-js'
-import { retry } from 'radash'
 import { fromString, typeidUnboxed } from 'typeid-js'
 import { CacheInterface } from './cache-interface'
 import { fetchViaIP, resolveIPv4 } from './happy-fetch'
@@ -346,84 +345,103 @@ export default async function handleRequest(request: Request, config: Configurat
   if (isSurveyPage && !replayedSubmission && bufferedBody && isStorableSubmission(request.method, request.headers.get('content-type')))
     await storeSubmission(cache, sessionId, upstreamURL.pathname, bufferedBody, request.headers.get('content-type')!)
 
+  // EdgeCenter (in front of us) gives the origin ~10 s to start responding, so
+  // OUR response headers must leave within ~8 s or the user gets EdgeCenter's
+  // error page instead of ours. Hard deadline: stop retrying and answer (retry
+  // page or 502) with sizable margin. The TTFB abort only guards time-to-headers;
+  // once headers arrive it is cleared, so long body streams (video) still get
+  // the full 30 s streaming budget.
+  const REQUEST_DEADLINE_MS = 7_000
+  const MAX_ATTEMPTS = 4
+  const ATTEMPT_TTFB_MS = 3_000
+  const requestStart = Date.now()
+
   let attempt = 0
-  let upstreamResp: Response
-  try {
-    upstreamResp = await retry({ times: 4, backoff: i => 200 * 2 ** (i - 1) + Math.random() * 100 }, async () => {
-      attempt++
-      const startedAt = Date.now()
+  let upstreamResp: Response | null = null
+  let lastError: unknown
+  while (attempt < MAX_ATTEMPTS) {
+    const remaining = REQUEST_DEADLINE_MS - (Date.now() - requestStart)
+    // not enough budget left for a meaningful attempt — give up early so the
+    // fallback response still beats the EdgeCenter timeout
+    if (attempt > 0 && remaining < 700)
+      break
 
-      // Fail fast (10 s) while waiting for response headers so a hung connection
-      // leaves time to retry, but keep the overall 30 s budget so binary body
-      // streams (video chunks, large assets) can finish without being cut off.
-      const ttfbController = new AbortController()
-      const ttfbTimer = setTimeout(() => ttfbController.abort(new Error('upstream TTFB timeout')), 10_000)
-      const signal = AbortSignal.any([AbortSignal.timeout(30_000), ttfbController.signal])
+    if (attempt > 0)
+      await new Promise(resolve => setTimeout(resolve, 100 + Math.random() * 150))
 
-      try {
-        // Happy-eyeballs across edge IPs: the first attempt uses the normal
-        // (pooled) fetch; retries pin a different resolved IP each time so a
-        // single unhealthy CloudFront edge can't eat the whole retry budget.
-        // Only in Bun — Workers can't choose the destination address.
-        let upstreamResp: Response
-        const pinnedIPs = attempt > 1 && isBunRuntime() ? await resolveIPv4(targetHost) : []
+    attempt++
+    const startedAt = Date.now()
 
-        if (pinnedIPs.length > 0) {
-          const ip = pinnedIPs[(attempt - 2) % pinnedIPs.length]
-          reqLog.info('retrying via pinned ip', { targetHost, ip, attempt })
-          upstreamResp = await fetchViaIP({
-            url: upstreamURL,
-            ip,
-            method: upstreamMethod,
-            headers: upstreamHeaders,
-            body: hasBody ? bufferedBody : null,
-            signal,
-          })
-        }
-        else {
-          const req = new Request(upstreamURL.toString(), {
-            method: upstreamMethod,
-            headers: upstreamHeaders,
-            redirect: 'manual',
-            signal,
-            body: hasBody ? (bufferedBody ?? request.body) : undefined,
-          })
+    const ttfbBudget = Math.min(ATTEMPT_TTFB_MS, Math.max(700, remaining - 300))
+    const ttfbController = new AbortController()
+    const ttfbTimer = setTimeout(() => ttfbController.abort(new Error('upstream TTFB timeout')), ttfbBudget)
+    const signal = AbortSignal.any([AbortSignal.timeout(30_000), ttfbController.signal])
 
-          // it's okay to retry POST requests here, they are idempotent with alchemer
-          upstreamResp = await fetch(req, {
-            redirect: 'manual',
-          })
-        }
+    try {
+      // Happy-eyeballs across edge IPs: the first attempt uses the normal
+      // (pooled) fetch; retries pin a different resolved IP each time so a
+      // single unhealthy CloudFront edge can't eat the whole retry budget.
+      // Only in Bun — Workers can't choose the destination address.
+      let resp: Response
+      const pinnedIPs = attempt > 1 && isBunRuntime() ? await resolveIPv4(targetHost) : []
 
-        if (upstreamResp.status === 502 || upstreamResp.status === 503 || upstreamResp.status === 504) {
-          reqLog.warn('upstream error, retrying', { status: upstreamResp.status, targetHost, attempt, elapsedMs: Date.now() - startedAt })
-          throw new Error('upstream error, retrying')
-        }
-
-        return upstreamResp
+      if (pinnedIPs.length > 0) {
+        const ip = pinnedIPs[(attempt - 2) % pinnedIPs.length]
+        reqLog.info('retrying via pinned ip', { targetHost, ip, attempt })
+        resp = await fetchViaIP({
+          url: upstreamURL,
+          ip,
+          method: upstreamMethod,
+          headers: upstreamHeaders,
+          body: hasBody ? bufferedBody : null,
+          signal,
+        })
       }
-      catch (error) {
-        if (!(error instanceof Error && error.message === 'upstream error, retrying')) {
-          reqLog.warn('upstream fetch failed, retrying', {
-            targetHost,
-            attempt,
-            elapsedMs: Date.now() - startedAt,
-            error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
-          })
-        }
-        throw error
+      else {
+        const req = new Request(upstreamURL.toString(), {
+          method: upstreamMethod,
+          headers: upstreamHeaders,
+          redirect: 'manual',
+          signal,
+          body: hasBody ? (bufferedBody ?? request.body) : undefined,
+        })
+
+        // it's okay to retry POST requests here, they are idempotent with alchemer
+        resp = await fetch(req, {
+          redirect: 'manual',
+        })
       }
-      finally {
-        clearTimeout(ttfbTimer)
+
+      if (resp.status === 502 || resp.status === 503 || resp.status === 504) {
+        reqLog.warn('upstream error, retrying', { status: resp.status, targetHost, attempt, elapsedMs: Date.now() - startedAt })
+        lastError = new Error(`upstream status ${resp.status}`)
+        continue
       }
-    })
+
+      upstreamResp = resp
+      break
+    }
+    catch (error) {
+      lastError = error
+      reqLog.warn('upstream fetch failed, retrying', {
+        targetHost,
+        attempt,
+        elapsedMs: Date.now() - startedAt,
+        error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+      })
+    }
+    finally {
+      clearTimeout(ttfbTimer)
+    }
   }
-  catch (error) {
+
+  if (!upstreamResp) {
     reqLog.warn('all upstream attempts failed', {
       targetHost,
       path: upstreamURL.pathname,
       attempts: attempt,
-      error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+      totalMs: Date.now() - requestStart,
+      error: lastError instanceof Error ? `${lastError.name}: ${lastError.message}` : String(lastError),
     })
 
     // Page navigations get an auto-retrying interstitial instead of a raw 502.
