@@ -37,8 +37,9 @@ export function renderRetryPage(details: RetryPageDetails): string {
     --bg: #ffffff;
     --text: #171717;
     --text-secondary: #6e6e73;
-    --accent: #0071e3;
-    --accent-strong: #0077ed;
+    --btn-bg: #171717;
+    --btn-bg-hover: #333336;
+    --btn-text: #ffffff;
     --ring: #d2d2d7;
   }
   @media (prefers-color-scheme: dark) {
@@ -46,8 +47,9 @@ export function renderRetryPage(details: RetryPageDetails): string {
       --bg: #000000;
       --text: #f5f5f7;
       --text-secondary: #a1a1a6;
-      --accent: #2997ff;
-      --accent-strong: #55aaff;
+      --btn-bg: #f5f5f7;
+      --btn-bg-hover: #d9d9de;
+      --btn-text: #171717;
       --ring: #3a3a3c;
     }
   }
@@ -59,12 +61,12 @@ export function renderRetryPage(details: RetryPageDetails): string {
     min-height: 100vh; margin: 0; padding: 24px;
     background: var(--bg); color: var(--text);
   }
-  main { max-width: 34em; width: 100%; text-align: center; }
+  main { max-width: 34em; width: 100%; text-align: left; }
   @media (prefers-reduced-motion: no-preference) {
     main { animation: enter .6s cubic-bezier(.16, 1, .3, 1) both; }
     @keyframes enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
   }
-  .indicator { position: relative; width: 52px; height: 52px; margin: 0 auto 28px; }
+  .indicator { position: relative; width: 52px; height: 52px; margin: 0 0 28px; }
   .indicator svg.icon { position: absolute; inset: 0; margin: auto; color: var(--text-secondary); }
   .ring {
     position: absolute; inset: 0; border-radius: 50%;
@@ -85,19 +87,19 @@ export function renderRetryPage(details: RetryPageDetails): string {
   p strong { color: var(--text); font-weight: 500; }
   #countdown { margin: 24px 0 0; font-variant-numeric: tabular-nums; }
   button {
-    display: none; margin: 24px auto 0; padding: 11px 26px;
+    display: inline-block; margin: 24px 0 0; padding: 11px 26px;
     font: inherit; font-size: 17px; border: 0; border-radius: 980px;
-    background: var(--accent); color: #fff; cursor: pointer;
+    background: var(--btn-bg); color: var(--btn-text); cursor: pointer;
     transition: background-color .15s ease-out;
   }
-  button:hover { background: var(--accent-strong); }
-  button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 980px; }
+  button:hover { background: var(--btn-bg-hover); }
+  button:focus-visible, summary:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; border-radius: 980px; }
   summary:focus-visible { border-radius: 4px; }
   details { margin-top: 40px; font-size: 13px; color: var(--text-secondary); }
   details summary { cursor: pointer; padding: 2px 0; }
   details code {
-    display: block; white-space: pre-wrap; word-break: break-all; text-align: left;
-    padding: 10px 0 0; margin: 0 auto; max-width: 30em;
+    display: block; white-space: pre-wrap; word-break: break-all;
+    padding: 10px 0 0; margin: 0;
     font-size: 12px; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   }
 </style>
@@ -152,7 +154,6 @@ saved-form: ${details.hasStoredSubmission ? 'yes' : 'no (progress on survey serv
   if (attempt >= MAX_AUTO) {
     sessionStorage.removeItem(key)
     document.querySelector('.indicator').style.display = 'none'
-    document.getElementById('retryBtn').style.display = 'block'
     document.getElementById('countdown').textContent = 'Автоматически восстановить соединение не получилось — нажмите кнопку или зайдите по этой же ссылке чуть позже. Ваши данные не потеряны.'
     return
   }
