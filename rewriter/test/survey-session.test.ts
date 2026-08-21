@@ -104,6 +104,60 @@ describe('survey session reinstatement', () => {
     expect(html).toContain('Начать опрос заново')
   })
 
+  it('starts a fresh session when visit_id changes, keeps it when visit_id is empty', async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(htmlResponse()))
+    vi.stubGlobal('fetch', fetchMock)
+
+    // first visit: submission stored against the cookie session + visit_id=v1
+    await handleRequest(makeRequest(`${SURVEY_PATH}?visit_id=v1`, {
+      method: 'POST',
+      body: FORM_BODY,
+      extraHeaders: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'cookie': `_rw_sid=${SESSION_ID}; _rw_vid=v1`,
+      },
+    }), config, cache)
+
+    // same visit_id (cookie carries it back) → session reused, submission replayed
+    fetchMock.mockClear()
+    await handleRequest(makeRequest(`${SURVEY_PATH}?visit_id=v1`, {
+      extraHeaders: {
+        'cookie': `_rw_sid=${SESSION_ID}; _rw_vid=v1`,
+        'sec-fetch-mode': 'navigate',
+        'accept': 'text/html',
+      },
+    }), config, cache)
+    expect(upstreamCall(fetchMock).method).toBe('POST')
+
+    // empty visit_id → still the same session
+    fetchMock.mockClear()
+    await handleRequest(makeRequest(`${SURVEY_PATH}?visit_id=`, {
+      extraHeaders: {
+        'cookie': `_rw_sid=${SESSION_ID}; _rw_vid=v1`,
+        'sec-fetch-mode': 'navigate',
+        'accept': 'text/html',
+      },
+    }), config, cache)
+    expect(upstreamCall(fetchMock).method).toBe('POST')
+
+    // new visit_id → fresh session: no replay, new cookies issued
+    fetchMock.mockClear()
+    const resp = await handleRequest(makeRequest(`${SURVEY_PATH}?visit_id=v2`, {
+      extraHeaders: {
+        'cookie': `_rw_sid=${SESSION_ID}; _rw_vid=v1`,
+        'sec-fetch-mode': 'navigate',
+        'accept': 'text/html',
+      },
+    }), config, cache)
+    expect(upstreamCall(fetchMock).method).toBe('GET')
+    const setCookies = resp.headers.getSetCookie().join('\n')
+    expect(setCookies).toContain('_rw_vid=v2')
+    expect(setCookies).toMatch(/_rw_sid=session_/)
+    expect(setCookies).not.toContain(SESSION_ID)
+    // our cookies never reach upstream
+    expect(upstreamCall(fetchMock).headers.get('cookie')).toBeNull()
+  })
+
   it('does not replay for non-navigation GETs', async () => {
     const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(htmlResponse()))
     vi.stubGlobal('fetch', fetchMock)

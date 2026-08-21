@@ -8,6 +8,8 @@ import { renderRetryPage } from './retry-page'
 import { clearSubmission, isStorableSubmission, loadSubmission, storeSubmission, Submission, SURVEY_PATH_REGEX } from './survey-session'
 
 const SESSION_COOKIE_NAME = '_rw_sid'
+const VISIT_COOKIE_NAME = '_rw_vid'
+const OWN_COOKIE_NAMES = [SESSION_COOKIE_NAME, VISIT_COOKIE_NAME]
 const SESSION_COOKIE_MAX_AGE = 60 * 60 * 24 * 365 // 1 year
 
 const OMITTED_HEADERS = new Set([
@@ -148,16 +150,21 @@ function isBunRuntime(): boolean {
   return typeof (globalThis as any).Bun !== 'undefined'
 }
 
+function readCookie(cookieHeader: string | null, name: string): string | null {
+  if (!cookieHeader)
+    return null
+  for (const part of cookieHeader.split(';')) {
+    const [key, ...rest] = part.split('=')
+    if (key.trim() === name)
+      return rest.join('=').trim()
+  }
+  return null
+}
+
 function parseSessionId(cookieHeader: string | null): TypeId<'session'> | null {
   try {
-    if (!cookieHeader)
-      return null
-    for (const part of cookieHeader.split(';')) {
-      const [name, ...rest] = part.split('=')
-      if (name.trim() === SESSION_COOKIE_NAME)
-        return fromString(rest.join('=').trim(), 'session') || null
-    }
-    return null
+    const value = readCookie(cookieHeader, SESSION_COOKIE_NAME)
+    return value ? fromString(value, 'session') || null : null
   }
   catch (error) {
     log.warn('error parsing session id', { error, cookie: cookieHeader })
@@ -165,10 +172,10 @@ function parseSessionId(cookieHeader: string | null): TypeId<'session'> | null {
   }
 }
 
-function stripSessionCookie(cookieHeader: string): string {
+function stripOwnCookies(cookieHeader: string): string {
   return cookieHeader
     .split(';')
-    .filter(part => part.split('=')[0].trim() !== SESSION_COOKIE_NAME)
+    .filter(part => !OWN_COOKIE_NAMES.includes(part.split('=')[0].trim()))
     .join(';')
     .trim()
 }
@@ -232,8 +239,8 @@ export default async function handleRequest(request: Request, config: Configurat
 
   // Short-circuit browser noise: upstream 404s these anyway, so answering
   // locally removes them from upstream traffic and from the error rate.
-  const requestPath = new URL(request.url).pathname
-  if (requestPath === '/favicon.ico' || requestPath === '/robots.txt')
+  const requestURL = new URL(request.url)
+  if (requestURL.pathname === '/favicon.ico' || requestURL.pathname === '/robots.txt')
     return new Response(null, { status: 404 })
 
   // -----------------------------------------------------------------
@@ -241,8 +248,22 @@ export default async function handleRequest(request: Request, config: Configurat
   // -----------------------------------------------------------------
   const cookieHeader = request.headers.get('cookie')
   const existingSessionId = parseSessionId(cookieHeader)
-  const sessionId = existingSessionId ?? typeidUnboxed('session')
-  const isNewSession = !existingSessionId
+  // A changed visit_id means a new visit: start a fresh session rather than
+  // reinstating the previous participant's progress. An empty/absent visit_id
+  // carries no signal, so the existing session is kept.
+  const visitId = requestURL.searchParams.get('visit_id') || ''
+  const visitCookieValue = encodeURIComponent(visitId)
+  const visitChanged = !!visitId && visitCookieValue !== readCookie(cookieHeader, VISIT_COOKIE_NAME)
+  const sessionId = (visitChanged ? null : existingSessionId) ?? typeidUnboxed('session')
+  const isNewSession = !existingSessionId || visitChanged
+
+  const cookieAttrs = `Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_COOKIE_MAX_AGE}`
+  const appendOwnCookies = (headers: Headers) => {
+    if (isNewSession)
+      headers.append('set-cookie', `${SESSION_COOKIE_NAME}=${sessionId}; ${cookieAttrs}`)
+    if (visitChanged)
+      headers.append('set-cookie', `${VISIT_COOKIE_NAME}=${visitCookieValue}; ${cookieAttrs}`)
+  }
 
   const reqLog = log.child({ sessionId, ip: fwdIP })
 
@@ -271,7 +292,7 @@ export default async function handleRequest(request: Request, config: Configurat
   }
 
   let replayedSubmission: Submission | null = null
-  if (isSurveyPage && request.method === 'GET' && existingSessionId && isNavigation) {
+  if (isSurveyPage && request.method === 'GET' && !isNewSession && isNavigation) {
     replayedSubmission = await loadSubmission(cache, sessionId, upstreamURL.pathname)
     if (replayedSubmission)
       reqLog.info('reinstating survey session by replaying stored submission', { path: upstreamURL.pathname })
@@ -292,7 +313,7 @@ export default async function handleRequest(request: Request, config: Configurat
   // Strip our session cookie so it is never forwarded upstream
   const upstreamCookie = upstreamHeaders.get('cookie')
   if (upstreamCookie) {
-    const cleaned = stripSessionCookie(upstreamCookie)
+    const cleaned = stripOwnCookies(upstreamCookie)
     if (cleaned)
       upstreamHeaders.set('cookie', cleaned)
     else
@@ -473,8 +494,7 @@ export default async function handleRequest(request: Request, config: Configurat
         'cache-control': 'no-store',
         'x-rewriter-error': 'upstream-unavailable',
       })
-      if (isNewSession)
-        headers.append('set-cookie', `${SESSION_COOKIE_NAME}=${sessionId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_COOKIE_MAX_AGE}`)
+      appendOwnCookies(headers)
       return new Response(renderRetryPage({
         reason: lastError instanceof Error ? lastError.message : String(lastError),
         attempts: attempt,
@@ -598,13 +618,7 @@ export default async function handleRequest(request: Request, config: Configurat
     newHeaders.delete('content-md5')
   }
 
-  // Only set the session cookie when it's a new session
-  if (isNewSession) {
-    newHeaders.append(
-      'set-cookie',
-      `${SESSION_COOKIE_NAME}=${sessionId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_COOKIE_MAX_AGE}`,
-    )
-  }
+  appendOwnCookies(newHeaders)
 
   // Timing breakdown to locate where TTFB is actually spent:
   // geoipMs — ip lookup (incl. AreaBook call on cache miss), upstreamMs — all
