@@ -1,0 +1,25 @@
+#cloud-config
+# Bootstrap ONLY. cloud-init runs once at first boot, so nothing that changes over the
+# life of the machine belongs here - Caddyfile, the unit, the app bundle and the certs
+# are pushed by null_resource.deploy on every apply. See deploy.tf.
+package_update: true
+packages:
+  - redis-server
+  - curl
+  - unzip
+  - acl
+  - certbot
+  - python3-certbot-dns-cloudflare
+  - debian-keyring
+  - debian-archive-keyring
+  - apt-transport-https
+
+runcmd:
+  - [ bash, -c, "curl -fsSL https://bun.sh/install | BUN_INSTALL=/opt/bun bash" ]
+  - [ bash, -c, "curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg" ]
+  - [ bash, -c, "curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' > /etc/apt/sources.list.d/caddy-stable.list" ]
+  - [ apt-get, update ]
+  - [ bash, -c, "DEBIAN_FRONTEND=noninteractive apt-get install -y caddy" ]
+  - [ install, -d, -m, "0755", -o, root, -g, root, /opt/rewriter ]
+  - [ install, -d, -m, "0755", -o, caddy, -g, caddy, /var/log/caddy ]
+  - [ systemctl, enable, --now, redis-server ]

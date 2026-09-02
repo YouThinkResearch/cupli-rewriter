@@ -1,0 +1,9 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+
+# service-account keys / tokens are passed in, never committed
+*sa-key*.json
+*.pem
+id_*
+!keys/*.pub

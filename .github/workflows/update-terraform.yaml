@@ -72,13 +72,62 @@ jobs:
       #   working-directory: edgecenter-relay-prosto
       #   run: terraform apply -input=false -auto-approve -var-file=configs/prostocupli.tfvars
 
-      # Initialise Terraform with the remote backend
-      - name: Terraform init (usurvey)
-        working-directory: edgecenter-relay-prosto
-        run: terraform init -input=false -backend-config=configs/u-survey.tfbackend -reconfigure
+      # u-survey.ru moved off EdgeCenter to the Yandex Cloud Moscow relay (yandex-relay/).
+      # These steps are kept, disabled, as the rollback path: re-enable them and the
+      # config repoints the DNS at the EdgeCenter CDN and renews its certificate.
+      # Do NOT run them alongside the yandex-relay job - both own the same DNS records.
+      # - name: Terraform init (usurvey)
+      #   working-directory: edgecenter-relay-prosto
+      #   run: terraform init -input=false -backend-config=configs/u-survey.tfbackend -reconfigure
+      #
+      # - name: Terraform apply (usurvey)
+      #   working-directory: edgecenter-relay-prosto
+      #   run: terraform apply -input=false -auto-approve -var-file=configs/u-survey.tfvars
 
-      # Perform the apply to renew certificate / sync CDN config. If there are
-      # no changes, Terraform exits with 0 and does nothing.
-      - name: Terraform apply (usurvey)
-        working-directory: edgecenter-relay-prosto
-        run: terraform apply -input=false -auto-approve -var-file=configs/u-survey.tfvars
+  yandex-relay:
+    name: Terraform apply (yandex-relay, u-survey.ru)
+    runs-on: ubuntu-latest
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      TF_VAR_relay_secret_key: ${{ secrets.RELAY_SECRET_KEY }}
+      TF_VAR_sa_key_file: ${{ github.workspace }}/yc-sa-key.json
+      # Public keys live in the repo (yandex-relay/keys/); only the private half is secret.
+      TF_VAR_ssh_private_key: ${{ github.workspace }}/id_relay
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # null_resource.deploy builds the bundle with `bun build.ts` before pushing it.
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install rewriter dependencies
+        working-directory: rewriter
+        run: bun install --frozen-lockfile
+
+      - name: Materialise credentials
+        run: |
+          printf '%s' '${{ secrets.YC_SA_KEY }}' > "$TF_VAR_sa_key_file"
+          printf '%s\n' '${{ secrets.RELAY_SSH_PRIVATE_KEY }}' > "$TF_VAR_ssh_private_key"
+          chmod 600 "$TF_VAR_sa_key_file" "$TF_VAR_ssh_private_key"
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: latest
+
+      - name: Terraform init
+        working-directory: yandex-relay
+        run: terraform init -input=false
+
+      - name: Terraform apply
+        working-directory: yandex-relay
+        run: terraform apply -input=false -auto-approve
+
+      - name: Scrub credentials
+        if: always()
+        run: rm -f "$TF_VAR_sa_key_file" "$TF_VAR_ssh_private_key"

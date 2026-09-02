@@ -1,0 +1,19 @@
+[Unit]
+Description=cupli rewriter (bun)
+After=network-online.target redis-server.service
+Wants=network-online.target
+
+[Service]
+# REWRITTEN_HOSTS is JSON: the whole assignment must be quoted and the inner quotes
+# escaped, or systemd strips them and the handler dies on JSON.parse.
+Environment="PORT=3000"
+Environment="REDIS_URL=redis://127.0.0.1:6379"
+Environment="PROXY_HOST=${proxy_host}"
+Environment="REWRITTEN_HOSTS=${rewritten_hosts_json_escaped}"
+Environment="RELAY_SECRET_KEY=${relay_secret_key}"
+ExecStart=/opt/bun/bin/bun /opt/rewriter/bun-handler.js
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
