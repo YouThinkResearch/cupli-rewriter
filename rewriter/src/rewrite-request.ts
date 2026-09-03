@@ -223,7 +223,11 @@ export default async function handleRequest(request: Request, config: Configurat
   let geoipMs = 0
 
   const fwdHost = request.headers.get('x-forwarded-host')?.toLowerCase() || ''
-  const fwdIP = (request.headers.get('x-real-ip') ?? request.headers.get('x-forwarded-for')?.split(',')[0]) || ''
+  // `||`, not `??`: an empty x-real-ip is not an address, and `??` only falls through on
+  // null, so a present-but-empty header would be kept and the request rejected as
+  // "Not found" even with a usable x-forwarded-for. We see such rejections in
+  // production at a low rate; which hop blanks the header is still unconfirmed.
+  const fwdIP = (request.headers.get('x-real-ip') || request.headers.get('x-forwarded-for')?.split(',')[0]) || ''
 
   if (!fwdHost || !fwdIP || !fwdHost.endsWith(config.proxyHost)) {
     log.warn('request rejected: missing forwarded headers', { fwdHost, ip: fwdIP })

@@ -1,0 +1,17 @@
+{
+  email ${acme_email}
+}
+
+${caddy_hosts} {
+  log {
+    output file /var/log/caddy/access.log
+    format json
+  }
+
+  tls ${cert_dir}/fullchain.pem ${cert_dir}/privkey.pem
+
+  reverse_proxy 127.0.0.1:3000 {
+    header_up X-Real-IP {remote_host}
+    header_up X-Forwarded-Host {host}
+  }
+}
