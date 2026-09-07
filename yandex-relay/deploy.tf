@@ -6,6 +6,18 @@
 # hashes, so `terraform apply` converges the live box without recreating it. The IP is
 # pinned and must survive, so recreation is not an option.
 
+variable "cache_ttl" {
+  description = "souin edge-cache lifetime for entries upstream marks cacheable"
+  type        = string
+  default     = "86400s"
+}
+
+variable "cache_stale" {
+  description = "how long a stale entry may still be served while revalidating"
+  type        = string
+  default     = "3600s"
+}
+
 variable "ssh_private_key" {
   description = "Private key matching var.ssh_public_key, used to push config"
   type        = string
@@ -20,6 +32,8 @@ locals {
     acme_email  = var.acme_email
     caddy_hosts = join(", ", local.proxy_domains)
     cert_dir    = local.cert_dir
+    cache_ttl   = var.cache_ttl
+    cache_stale = var.cache_stale
   })
 
   rewriter_unit = templatefile("${path.module}/files/rewriter.service.tftpl", {

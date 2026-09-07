@@ -1,5 +1,14 @@
 {
   email ${acme_email}
+
+  # souin (caddyserver/cache-handler). Defaults are deliberately conservative:
+  # only what upstream marks cacheable is stored, and the rewriter now sets
+  # Cache-Control on static assets so those are what actually land here.
+  cache {
+    ttl ${cache_ttl}
+    stale ${cache_stale}
+    default_cache_control no-store
+  }
 }
 
 ${caddy_hosts} {
@@ -9,6 +18,8 @@ ${caddy_hosts} {
   }
 
   tls ${cert_dir}/fullchain.pem ${cert_dir}/privkey.pem
+
+  cache
 
   reverse_proxy 127.0.0.1:3000 {
     header_up X-Real-IP {remote_host}

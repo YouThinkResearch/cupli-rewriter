@@ -36,6 +36,26 @@ const OMITTED_HEADERS = new Set([
 
 const ENABLE_GEOIP_LOOKUP = true
 
+// Upstream sends ETag/Last-Modified but no Cache-Control at all, so browsers revalidate
+// every asset on every page view: 46% of our traffic was re-fetching the same 225 URLs.
+// Deliberately excludes text/html — survey pages are per-session and must never be cached.
+const STATIC_CONTENT_TYPE = /^(?:image|font|audio|video)\/|^text\/css\b|^(?:application|text)\/javascript\b|^application\/(?:x-)?font/i
+
+// Alchemer serves its runtime bundles under a build-stamped prefix (/2026.09.04.00/...),
+// so those URLs never change content and can be cached indefinitely.
+const IMMUTABLE_PATH = /\/\d{4}\.\d{2}\.\d{2}\.\d{2}\//
+
+const STATIC_MAX_AGE = 60 * 60 * 24 // 1 day for library media
+const IMMUTABLE_MAX_AGE = 60 * 60 * 24 * 365
+
+export function staticCacheControl(contentType: string, pathname: string): string | null {
+  if (!STATIC_CONTENT_TYPE.test(contentType))
+    return null
+  return IMMUTABLE_PATH.test(pathname)
+    ? `public, max-age=${IMMUTABLE_MAX_AGE}, immutable`
+    : `public, max-age=${STATIC_MAX_AGE}`
+}
+
 export type RewrittenHost = [host: string, alias?: string]
 
 export interface Configuration {
@@ -622,7 +642,25 @@ export default async function handleRequest(request: Request, config: Configurat
     newHeaders.delete('content-md5')
   }
 
-  appendOwnCookies(newHeaders)
+  // A Set-Cookie on an image is pointless and makes the response unusable to any shared
+  // cache, so static assets get a Cache-Control instead and no cookie. The session cookie
+  // still rides on the survey document, which is always fetched first.
+  const cacheControl = staticCacheControl(ctype, upstreamURL.pathname)
+  if (cacheControl && upstreamResp.status === 200) {
+    // Build-stamped paths cannot change content, so our immutable directive overrides
+    // upstream's short max-age (it ships 7200s on bundles it rebuilds under a new
+    // stamp anyway). For unversioned media we defer to upstream if it said anything.
+    if (IMMUTABLE_PATH.test(upstreamURL.pathname) || !newHeaders.has('cache-control'))
+      newHeaders.set('cache-control', cacheControl)
+
+    // A Set-Cookie on an image or a bundle is noise, and once the edge cache stores
+    // the response it would hand that cookie to every later visitor. The document
+    // response still carries upstream's cookies.
+    newHeaders.delete('set-cookie')
+  }
+  else {
+    appendOwnCookies(newHeaders)
+  }
 
   // Timing breakdown to locate where TTFB is actually spent:
   // geoipMs — ip lookup (incl. AreaBook call on cache miss), upstreamMs — all

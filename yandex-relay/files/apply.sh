@@ -2,6 +2,23 @@
 # Idempotent config apply. Runs on every `terraform apply` whose triggers changed.
 set -euo pipefail
 
+# Edge cache. The apt caddy has no HTTP cache module, so we swap in the official
+# custom build that bundles caddyserver/cache-handler (souin). Idempotent: only
+# downloads when the running binary lacks the module.
+CADDY_BUILD="https://caddyserver.com/api/download?os=linux&arch=amd64&p=github.com/caddyserver/cache-handler"
+if ! /usr/bin/caddy list-modules 2>/dev/null | grep -q '^http.handlers.cache$'; then
+  echo "installing caddy build with cache-handler"
+  curl -fsSL --max-time 300 "$CADDY_BUILD" -o /tmp/caddy-cache
+  # A truncated or error-page download would take the proxy down on restart.
+  chmod +x /tmp/caddy-cache
+  /tmp/caddy-cache list-modules | grep -q '^http.handlers.cache$' || { echo "downloaded caddy lacks cache-handler, aborting"; exit 1; }
+  apt-mark hold caddy >/dev/null 2>&1 || true
+  install -m 0755 /tmp/caddy-cache /usr/bin/caddy
+  rm -f /tmp/caddy-cache
+  setcap cap_net_bind_service=+ep /usr/bin/caddy 2>/dev/null || true
+  NEED_CADDY_RESTART=1
+fi
+
 install -m 0644 /tmp/rewriter.service /etc/systemd/system/rewriter.service
 install -m 0644 /tmp/Caddyfile        /etc/caddy/Caddyfile
 install -m 0644 /tmp/bun-handler.js   /opt/rewriter/bun-handler.js
@@ -50,7 +67,7 @@ systemctl daemon-reload
 systemctl enable --now redis-server
 systemctl restart rewriter
 caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1 || { echo "Caddyfile invalid, not reloading"; exit 1; }
-systemctl reload caddy || systemctl restart caddy
+if [ "${NEED_CADDY_RESTART:-0}" = 1 ]; then systemctl restart caddy; else systemctl reload caddy || systemctl restart caddy; fi
 
 sleep 2
 systemctl is-active --quiet rewriter || { echo "rewriter failed to start"; journalctl -u rewriter -n 20 --no-pager; exit 1; }
