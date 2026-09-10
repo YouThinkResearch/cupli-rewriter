@@ -3,20 +3,39 @@
 set -euo pipefail
 
 # Edge cache. The apt caddy has no HTTP cache module, so we swap in the official
-# custom build that bundles caddyserver/cache-handler (souin). Idempotent: only
-# downloads when the running binary lacks the module.
+# custom build that bundles caddyserver/cache-handler (souin). Idempotent, and
+# deliberately NON-FATAL: this is a ~48MB pull from Moscow and it has timed out
+# mid-download before. Losing the cache is a slowdown; refusing to deploy because
+# of it is an outage, so on failure we carry on with the stock binary and drop the
+# cache directives from the Caddyfile below.
 CADDY_BUILD="https://caddyserver.com/api/download?os=linux&arch=amd64&p=github.com/caddyserver/cache-handler"
-if ! /usr/bin/caddy list-modules 2>/dev/null | grep -q '^http.handlers.cache$'; then
-  echo "installing caddy build with cache-handler"
-  curl -fsSL --max-time 300 "$CADDY_BUILD" -o /tmp/caddy-cache
-  # A truncated or error-page download would take the proxy down on restart.
-  chmod +x /tmp/caddy-cache
-  /tmp/caddy-cache list-modules | grep -q '^http.handlers.cache$' || { echo "downloaded caddy lacks cache-handler, aborting"; exit 1; }
-  apt-mark hold caddy >/dev/null 2>&1 || true
-  install -m 0755 /tmp/caddy-cache /usr/bin/caddy
+has_cache() { /usr/bin/caddy list-modules 2>/dev/null | grep -q '^http.handlers.cache$'; }
+
+if ! has_cache; then
+  echo "fetching caddy build with cache-handler"
+  if curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors -C - --max-time 900 \
+       "$CADDY_BUILD" -o /tmp/caddy-cache; then
+    chmod +x /tmp/caddy-cache
+    # A truncated download would take the proxy down on restart.
+    if /tmp/caddy-cache list-modules 2>/dev/null | grep -q '^http.handlers.cache$'; then
+      apt-mark hold caddy >/dev/null 2>&1 || true
+      install -m 0755 /tmp/caddy-cache /usr/bin/caddy
+      setcap cap_net_bind_service=+ep /usr/bin/caddy 2>/dev/null || true
+      NEED_CADDY_RESTART=1
+    else
+      echo "WARNING: downloaded caddy lacks cache-handler, keeping stock binary"
+    fi
+  else
+    echo "WARNING: caddy cache build download failed, continuing without edge cache"
+  fi
   rm -f /tmp/caddy-cache
-  setcap cap_net_bind_service=+ep /usr/bin/caddy 2>/dev/null || true
-  NEED_CADDY_RESTART=1
+fi
+
+# Serving a Caddyfile with `cache` on a binary that lacks the module is a hard
+# config error, i.e. no proxy at all. Strip those lines when unsupported.
+if ! has_cache; then
+  sed -i '/# >>>CACHE/,/# <<<CACHE/d; /# CACHE-LINE/d' /tmp/Caddyfile
+  echo "caddy has no cache module; serving without edge cache"
 fi
 
 install -m 0644 /tmp/rewriter.service /etc/systemd/system/rewriter.service
@@ -40,28 +59,11 @@ if [ -s /tmp/ci_key.pub ]; then
   rm -f /tmp/ci_key.pub
 fi
 
-install -d -m 0755 /etc/letsencrypt
-install -m 0600 /tmp/cloudflare.ini /etc/letsencrypt/cloudflare.ini
-rm -f /tmp/cloudflare.ini
-
-DOMAINS_ARGS=""
-for d in $DOMAINS; do DOMAINS_ARGS="$DOMAINS_ARGS -d $d"; done
-
-if [ ! -d "/etc/letsencrypt/live/$PRIMARY_DOMAIN" ]; then
-  certbot certonly --non-interactive --agree-tos --email "$ACME_EMAIL" \
-    --dns-cloudflare --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini \
-    --dns-cloudflare-propagation-seconds 20 $DOMAINS_ARGS
-fi
-
-# caddy runs unprivileged; without this it cannot read the cert it is told to serve.
-install -d -m 0755 /etc/letsencrypt/renewal-hooks/deploy
-cat > /etc/letsencrypt/renewal-hooks/deploy/caddy.sh <<'HOOK'
-#!/bin/sh
-setfacl -R -m u:caddy:rX /etc/letsencrypt/live /etc/letsencrypt/archive
-systemctl reload caddy
-HOOK
-chmod +x /etc/letsencrypt/renewal-hooks/deploy/caddy.sh
-setfacl -R -m u:caddy:rX /etc/letsencrypt/live /etc/letsencrypt/archive
+# Certificates are Caddy's own job now (HTTP-01; DNS points here permanently).
+# certbot + a Cloudflare token on the box + an ACL to let caddy read /etc/letsencrypt
+# were three moving parts that all had to work on a rebuild, and on 2026-09-10 the
+# DNS-01 challenge failed and left the proxy with no cert at all.
+install -d -m 0755 -o caddy -g caddy /var/lib/caddy
 
 systemctl daemon-reload
 systemctl enable --now redis-server

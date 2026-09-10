@@ -1,6 +1,7 @@
 {
   email ${acme_email}
 
+  # >>>CACHE  (stripped by apply.sh if the running caddy lacks the module)
   # souin (caddyserver/cache-handler). Defaults are deliberately conservative:
   # only what upstream marks cacheable is stored, and the rewriter now sets
   # Cache-Control on static assets so those are what actually land here.
@@ -9,17 +10,18 @@
     stale ${cache_stale}
     default_cache_control no-store
   }
+  # <<<CACHE
 }
 
 ${caddy_hosts} {
+  # stdout, not a file: the packaged unit sandboxes /var/log and Caddy refuses to
+  # start when it cannot open the log, which turned a cosmetic setting into an outage.
   log {
-    output file /var/log/caddy/access.log
+    output stdout
     format json
   }
 
-  tls ${cert_dir}/fullchain.pem ${cert_dir}/privkey.pem
-
-  cache
+  cache # CACHE-LINE
 
   reverse_proxy 127.0.0.1:3000 {
     header_up X-Real-IP {remote_host}

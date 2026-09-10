@@ -398,15 +398,24 @@ export default async function handleRequest(request: Request, config: Configurat
     submissionStored = true
   }
 
-  // EdgeCenter (in front of us) gives the origin ~10 s to start responding, so
-  // OUR response headers must leave within ~8 s or the user gets EdgeCenter's
-  // error page instead of ours. Hard deadline: stop retrying and answer (retry
-  // page or 502) with sizable margin. The TTFB abort only guards time-to-headers;
-  // once headers arrive it is cleared, so long body streams (video) still get
-  // the full 30 s streaming budget.
-  const REQUEST_DEADLINE_MS = 7_000
-  const MAX_ATTEMPTS = 4
-  const ATTEMPT_TTFB_MS = 3_000
+  // TEMPORARY — raised 2026-09-10 for an Alchemer-side slowdown. Their TTFB on
+  // /s3/<id>/ went from ~0.5 s to 8-16 s (confirmed from two unrelated networks and
+  // two CloudFront edges, so it is theirs, not ours), and every attempt was aborting
+  // long before they answered: ~4600 aborts and a single success per 20 minutes, i.e.
+  // the retry page for essentially every visitor.
+  // REVERT TO 7_000 / 4 / 3_000 once Alchemer is healthy again.
+  //
+  // The old 7 s deadline came from EdgeCenter sitting in front of us and giving the
+  // origin ~10 s; that hop is gone, Caddy is in front now and imposes no such limit,
+  // so the tight budget no longer buys anything.
+  //
+  // Attempts are cut to 2 on purpose: when the upstream is uniformly slow rather than
+  // one edge being unhealthy, retrying only multiplies load on a struggling origin.
+  // The TTFB abort only guards time-to-headers; once headers arrive it is cleared, so
+  // long body streams (video) still get the full 30 s streaming budget.
+  const REQUEST_DEADLINE_MS = 25_000
+  const MAX_ATTEMPTS = 2
+  const ATTEMPT_TTFB_MS = 20_000
   const requestStart = Date.now()
 
   // Manual failure switch for testing the retry/recovery flow end to end:

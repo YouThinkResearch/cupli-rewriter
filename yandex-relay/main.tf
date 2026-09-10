@@ -106,8 +106,16 @@ provider "yandex" {
   zone                     = var.zone
 }
 
-data "yandex_compute_image" "ubuntu" {
-  family = "ubuntu-2404-lts"
+# PINNED ON PURPOSE. This used to be a `family = "ubuntu-2404-lts"` lookup, which
+# always resolves to the newest image; when Yandex published one on 2026-09-07 the
+# resulting image_id change forced a full VM replacement on the next apply and took
+# the site down (certs live on the box, so they went with it). CI applies on every
+# push to main, so that was an unattended prod rebuild waiting to happen.
+# Bump this deliberately, never automatically.
+variable "image_id" {
+  description = "Boot image, pinned. ubuntu-24-04-lts-v20260907"
+  type        = string
+  default     = "fd8d6s0blceqbto92ss8"
 }
 
 # Own network so we never touch the existing k8s VPC.
@@ -152,7 +160,7 @@ resource "yandex_compute_instance" "probe" {
 
   boot_disk {
     initialize_params {
-      image_id = data.yandex_compute_image.ubuntu.id
+      image_id = var.image_id
       size     = 15
     }
   }
@@ -162,6 +170,12 @@ resource "yandex_compute_instance" "probe" {
     security_group_ids = [yandex_vpc_security_group.probe.id]
     nat                = true
     nat_ip_address     = yandex_vpc_address.probe.external_ipv4_address[0].address
+  }
+
+  # Belt and braces after the 2026-09-10 rebuild: refuse to destroy this instance
+  # without a human deliberately removing this block.
+  lifecycle {
+    prevent_destroy = true
   }
 
   metadata = {

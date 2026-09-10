@@ -26,12 +26,10 @@ variable "ssh_private_key" {
 
 locals {
   bundle_src = "${path.module}/../rewriter/dist/bun-handler.js"
-  cert_dir   = "/etc/letsencrypt/live/${local.proxy_domains[0]}"
 
   caddyfile = templatefile("${path.module}/files/Caddyfile.tftpl", {
     acme_email  = var.acme_email
     caddy_hosts = join(", ", local.proxy_domains)
-    cert_dir    = local.cert_dir
     cache_ttl   = var.cache_ttl
     cache_stale = var.cache_stale
   })
@@ -90,11 +88,6 @@ resource "null_resource" "deploy" {
   }
 
   provisioner "file" {
-    content     = "dns_cloudflare_api_token = ${var.cloudflare_api_token}\n"
-    destination = "/tmp/cloudflare.ini"
-  }
-
-  provisioner "file" {
     content     = var.ci_public_key == "" ? "" : file(pathexpand(var.ci_public_key))
     destination = "/tmp/ci_key.pub"
   }
@@ -106,7 +99,7 @@ resource "null_resource" "deploy" {
 
   provisioner "remote-exec" {
     inline = [
-      "sudo DOMAINS='${join(" ", local.proxy_domains)}' PRIMARY_DOMAIN='${local.proxy_domains[0]}' ACME_EMAIL='${var.acme_email}' bash /tmp/apply.sh",
+      "sudo bash /tmp/apply.sh",
     ]
   }
 }
