@@ -24,7 +24,7 @@
     "@types/bun": "^1.2.18",
     "eslint": "^9.37.0",
     "typescript": "^5.5.2",
-    "vitest": "~3.2.0",
+    "vitest": "~4.1.0",
     "wrangler": "^4.22.0"
   }
 }
