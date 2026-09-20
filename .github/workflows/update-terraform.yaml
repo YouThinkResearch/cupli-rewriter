@@ -86,6 +86,12 @@ jobs:
 
   yandex-relay:
     name: Terraform apply (yandex-relay, u-survey.ru)
+    # Manual dispatch only. The schedule above exists to renew the EdgeCenter ACME
+    # certificate in the job above; this relay's certs are Caddy's own (HTTP-01, see
+    # files/apply.sh) and renew themselves, so the cron buys this job nothing. What it
+    # did buy was two unattended prod rebuilds (2026-09-10, 2026-09-20), both from a
+    # boot image lookup resolving to a newer image. Deploy with `gh workflow run`.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     env:
       TF_IN_AUTOMATION: "true"

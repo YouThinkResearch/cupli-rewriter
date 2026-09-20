@@ -6,6 +6,18 @@
 # hashes, so `terraform apply` converges the live box without recreating it. The IP is
 # pinned and must survive, so recreation is not an option.
 
+variable "cache_ttl" {
+  description = "souin edge-cache lifetime for entries upstream marks cacheable"
+  type        = string
+  default     = "86400s"
+}
+
+variable "cache_stale" {
+  description = "how long a stale entry may still be served while revalidating"
+  type        = string
+  default     = "3600s"
+}
+
 variable "ssh_private_key" {
   description = "Private key matching var.ssh_public_key, used to push config"
   type        = string
@@ -14,12 +26,12 @@ variable "ssh_private_key" {
 
 locals {
   bundle_src = "${path.module}/../rewriter/dist/bun-handler.js"
-  cert_dir   = "/etc/letsencrypt/live/${local.proxy_domains[0]}"
 
   caddyfile = templatefile("${path.module}/files/Caddyfile.tftpl", {
     acme_email  = var.acme_email
     caddy_hosts = join(", ", local.proxy_domains)
-    cert_dir    = local.cert_dir
+    cache_ttl   = var.cache_ttl
+    cache_stale = var.cache_stale
   })
 
   rewriter_unit = templatefile("${path.module}/files/rewriter.service.tftpl", {
@@ -76,11 +88,6 @@ resource "null_resource" "deploy" {
   }
 
   provisioner "file" {
-    content     = "dns_cloudflare_api_token = ${var.cloudflare_api_token}\n"
-    destination = "/tmp/cloudflare.ini"
-  }
-
-  provisioner "file" {
     content     = var.ci_public_key == "" ? "" : file(pathexpand(var.ci_public_key))
     destination = "/tmp/ci_key.pub"
   }
@@ -92,7 +99,7 @@ resource "null_resource" "deploy" {
 
   provisioner "remote-exec" {
     inline = [
-      "sudo DOMAINS='${join(" ", local.proxy_domains)}' PRIMARY_DOMAIN='${local.proxy_domains[0]}' ACME_EMAIL='${var.acme_email}' bash /tmp/apply.sh",
+      "sudo bash /tmp/apply.sh",
     ]
   }
 }
