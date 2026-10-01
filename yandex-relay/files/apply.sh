@@ -100,6 +100,11 @@ install -d -m 0755 -o caddy -g caddy /var/lib/caddy
 
 systemctl daemon-reload
 systemctl enable --now redis-server
+# enable, not just restart: the box reboots on its own for unattended kernel
+# upgrades, and a service that was only ever restarted does not come back. This bit
+# us on 2026-10-01 - caddy and s3explorer were enabled, the rewriter was not, so the
+# box came up serving 502 on every survey URL.
+systemctl enable rewriter
 systemctl restart rewriter
 caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1 || { echo "Caddyfile invalid, not reloading"; exit 1; }
 if [ "${NEED_CADDY_RESTART:-0}" = 1 ]; then systemctl restart caddy; else systemctl reload caddy || systemctl restart caddy; fi
