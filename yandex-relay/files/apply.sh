@@ -38,6 +38,39 @@ if ! has_cache; then
   echo "caddy has no cache module; serving without edge cache"
 fi
 
+# Logging and memory caps. Both of these bit us: pointing Caddy's per-request JSON
+# access log at stdout sends it to the journal AND rsyslog copies it into
+# /var/log/syslog, so every request was written to disk twice - 4.2GB of logs and
+# measurable IO pressure. And souin keeps its cache in-process with no bound, so Caddy
+# sat at ~600MB RSS (peak 783MB) on a 2GB box with MemoryMax=infinity.
+install -d -m 0755 /etc/systemd/journald.conf.d
+cat > /etc/systemd/journald.conf.d/cap.conf <<'JRNL'
+[Journal]
+SystemMaxUse=200M
+MaxRetentionSec=3day
+JRNL
+
+# rsyslog does not need a second copy of what journald already keeps.
+install -d -m 0755 /etc/rsyslog.d
+cat > /etc/rsyslog.d/00-drop-caddy.conf <<'RSL'
+if $programname == 'caddy' then stop
+RSL
+
+install -d -m 0755 /etc/systemd/system/caddy.service.d
+cat > /etc/systemd/system/caddy.service.d/memory.conf <<'MEM'
+[Service]
+# souin's cache is unbounded; keep it from starving the box.
+MemoryHigh=450M
+MemoryMax=600M
+MEM
+
+systemctl restart systemd-journald
+systemctl restart rsyslog 2>/dev/null || true
+journalctl --vacuum-size=200M >/dev/null 2>&1 || true
+# the pre-cap syslog files are not rotated away by the above
+rm -f /var/log/syslog.[0-9] /var/log/syslog.[0-9].gz
+: > /var/log/syslog 2>/dev/null || true
+
 install -m 0644 /tmp/rewriter.service /etc/systemd/system/rewriter.service
 install -m 0644 /tmp/Caddyfile        /etc/caddy/Caddyfile
 install -m 0644 /tmp/bun-handler.js   /opt/rewriter/bun-handler.js
