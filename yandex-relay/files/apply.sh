@@ -59,9 +59,14 @@ RSL
 install -d -m 0755 /etc/systemd/system/caddy.service.d
 cat > /etc/systemd/system/caddy.service.d/memory.conf <<'MEM'
 [Service]
-# souin's cache is unbounded; keep it from starving the box.
-MemoryHigh=450M
-MemoryMax=600M
+# Hard cap only, never MemoryHigh. souin's cache is unbounded, but MemoryHigh does not
+# kill - it throttles: on 2026-10-01 Caddy reached a 450M soft ceiling, the kernel
+# reclaim-throttled it ~750k times and it hung serving nothing while the rewriter
+# behind it was healthy. Better to die and restart in 2s (losing the cache) than hang.
+MemoryHigh=infinity
+MemoryMax=900M
+Restart=always
+RestartSec=2
 MEM
 
 systemctl restart systemd-journald
