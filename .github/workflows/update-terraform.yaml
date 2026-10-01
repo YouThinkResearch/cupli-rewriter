@@ -97,6 +97,9 @@ jobs:
       TF_IN_AUTOMATION: "true"
       TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       TF_VAR_relay_secret_key: ${{ secrets.RELAY_SECRET_KEY }}
+      # s3explorer has no defaults for these, so an apply without them just fails
+      TF_VAR_explorer_password: ${{ secrets.EXPLORER_APP_PASSWORD }}
+      TF_VAR_explorer_session_secret: ${{ secrets.EXPLORER_SESSION_SECRET }}
       TF_VAR_sa_key_file: ${{ github.workspace }}/yc-sa-key.json
       # Public keys live in the repo (yandex-relay/keys/); only the private half is secret.
       TF_VAR_ssh_private_key: ${{ github.workspace }}/id_relay

@@ -28,10 +28,12 @@ locals {
   bundle_src = "${path.module}/../rewriter/dist/bun-handler.js"
 
   caddyfile = templatefile("${path.module}/files/Caddyfile.tftpl", {
-    acme_email  = var.acme_email
-    caddy_hosts = join(", ", local.proxy_domains)
-    cache_ttl   = var.cache_ttl
-    cache_stale = var.cache_stale
+    acme_email    = var.acme_email
+    caddy_hosts   = join(", ", local.proxy_domains)
+    explorer_host = var.explorer_host
+    explorer_port = var.explorer_port
+    cache_ttl     = var.cache_ttl
+    cache_stale   = var.cache_stale
   })
 
   rewriter_unit = templatefile("${path.module}/files/rewriter.service.tftpl", {
@@ -49,6 +51,8 @@ locals {
 }
 
 resource "null_resource" "deploy" {
+  depends_on = [cloudflare_dns_record.explorer]
+
   triggers = {
     src       = local.src_hash
     caddyfile = sha256(local.caddyfile)

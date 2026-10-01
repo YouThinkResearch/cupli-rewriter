@@ -28,3 +28,13 @@ ${caddy_hosts} {
     header_up X-Forwarded-Host {host}
   }
 }
+
+${explorer_host} {
+  log {
+    output stdout
+    format json
+  }
+
+  # No `cache` here: this is an authenticated dynamic app, not static assets.
+  reverse_proxy 127.0.0.1:${explorer_port}
+}
