@@ -156,9 +156,13 @@ resource "yandex_compute_instance" "probe" {
   platform_id = "standard-v3"
   zone        = var.zone
 
+  # 100%, not the 20% burstable fraction this box was first provisioned with. That was
+  # fine for a throughput probe and wrong for production: a CPU spike on a 20% core
+  # starves the proxy. Raised out-of-band on 2026-10-01; pinned here so no apply
+  # silently shrinks it back (and shrinking requires stopping the instance anyway).
   resources {
     cores         = 2
-    core_fraction = 20
+    core_fraction = 100
     memory        = 2
   }
 
