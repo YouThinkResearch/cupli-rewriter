@@ -1,0 +1,37 @@
+name: EdgeCenter -> hub-production (u-survey.ru)
+
+# u-survey.ru's CDN + cert + DNS. The origin (k8s/rewriter.yaml) is applied to
+# hub-production separately with kubectl.
+on:
+  push:
+    branches: ["main"]
+    paths: ["edgecenter-hub/**", "edgecenter-relay-prosto/modules/**", ".github/workflows/edgecenter-hub.yaml"]
+  schedule:
+    - cron: "0 3 * * 0" # weekly, so the LE cert gets renewed well before expiry
+  workflow_dispatch:
+
+concurrency:
+  group: edgecenter-hub
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_VAR_edgecenter_api_token: ${{ secrets.EDGECENTER_API_TOKEN }}
+      TF_VAR_cloudflare_api_key: ${{ secrets.CLOUDFLARE_CUPLI_API_KEY }}
+      TF_VAR_cloudflare_email: ${{ secrets.CLOUDFLARE_CUPLI_EMAIL }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: latest
+      - name: Terraform init
+        working-directory: edgecenter-hub
+        run: terraform init -input=false
+      - name: Terraform apply
+        working-directory: edgecenter-hub
+        run: terraform apply -input=false -auto-approve

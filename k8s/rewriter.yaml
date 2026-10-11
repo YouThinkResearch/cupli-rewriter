@@ -1,0 +1,71 @@
+# Rewriter on hub-production, origin for the EdgeCenter CDN (u-survey.ru).
+#
+# Exposed as a raw NodePort, NOT through Traefik: EdgeCenter rewrites Host to the
+# origin hostname and carries the real client host/IP in X-Forwarded-Host / X-Real-IP,
+# which Traefik would overwrite with its own view (the edge node's IP and the origin
+# hostname). This mirrors the old Railway TCP-proxy setup, where bun saw EdgeCenter's
+# headers directly.
+#
+# The bundle ships in a ConfigMap (built from rewriter/ with `bun build.ts`; it is a
+# single self-contained ~125KB file), so no image build or registry is involved.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rewriter
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rewriter
+  namespace: rewriter
+spec:
+  # One replica on purpose: survey-session replay state lives in the pod's redis.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: { app: rewriter }
+  template:
+    metadata:
+      labels: { app: rewriter }
+    spec:
+      containers:
+        - name: rewriter
+          image: oven/bun:1.3-slim
+          command: ["bun", "/app/bun-handler.js"]
+          env:
+            - { name: PORT, value: "3000" }
+            - { name: PROXY_HOST, value: "u-survey.ru" }
+            - { name: REDIS_URL, value: "redis://127.0.0.1:6379" }
+            - name: REWRITTEN_HOSTS
+              value: '[["survey.alchemer.com","survey"],["www.surveygizmo.com","gzmo"],["surveygizmolibrary.s3.amazonaws.com","gzmos3"],["d3hz8hujpo34t2.cloudfront.net","gzmocfr"]]'
+          ports:
+            - { containerPort: 3000, name: http }
+          volumeMounts:
+            - { name: bundle, mountPath: /app }
+          readinessProbe:
+            tcpSocket: { port: 3000 }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { memory: 512Mi }
+        - name: redis
+          image: redis:7-alpine
+          args: ["--save", "", "--appendonly", "no", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+          resources:
+            requests: { cpu: 20m, memory: 32Mi }
+            limits: { memory: 192Mi }
+      volumes:
+        - name: bundle
+          configMap: { name: rewriter-bundle }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rewriter
+  namespace: rewriter
+spec:
+  type: NodePort
+  selector: { app: rewriter }
+  ports:
+    - { name: http, port: 3000, targetPort: 3000, nodePort: 30380 }

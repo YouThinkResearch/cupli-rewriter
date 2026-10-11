@@ -20,13 +20,7 @@ provider "cloudflare" {
   api_token = var.cloudflare_api_token
 }
 
-resource "cloudflare_dns_record" "relay" {
-  for_each = toset(local.proxy_domains)
-
-  zone_id = var.cloudflare_zone_id
-  name    = each.value
-  type    = "A"
-  content = yandex_compute_instance.probe.network_interface.0.nat_ip_address
-  ttl     = 300   # short while we watch the cutover; raise once it settles
-  proxied = false # direct to Moscow, same posture as the EdgeCenter setup
-}
+# The survey/gzmo/gzmos3/gzmocfr records moved to edgecenter-hub/ on 2026-10-11, when
+# ru-central1-a was lost and u-survey.ru went back behind EdgeCenter. They were removed
+# from this state with `terraform state rm`; do not re-add them here, or two configs
+# own the same names again.
