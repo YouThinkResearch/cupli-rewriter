@@ -84,11 +84,16 @@ variable "aliases" {
 }
 
 # ponytail: single node as origin. NodePort answers on every node, so if this node dies
-# switch the IP to 135.181.180.212 or 65.109.59.226 and apply.
-variable "origin_source" {
-  description = "host:port of the rewriter NodePort on hub-production"
+# switch origin_ip to 135.181.180.212 or 65.109.59.226 and apply.
+variable "origin_ip" {
+  description = "a hub-production node; the rewriter NodePort answers on all of them"
   type        = string
-  default     = "65.109.54.88:30380"
+  default     = "65.109.54.88"
+}
+
+variable "origin_port" {
+  type    = number
+  default = 30380
 }
 
 provider "edgecenter" {
@@ -108,6 +113,18 @@ provider "acme" {
 
 locals {
   hosts = [for a in var.aliases : "${a}.${var.proxy_host}"]
+  # EdgeCenter rejects an IP here: the module uses the origin host for the Host
+  # header and SNI, and the API requires "a valid domain name".
+  origin_host = "hub-origin.${var.proxy_host}"
+}
+
+resource "cloudflare_dns_record" "origin" {
+  zone_id = var.zone_id
+  name    = local.origin_host
+  type    = "A"
+  content = var.origin_ip
+  ttl     = 300
+  proxied = false
 }
 
 data "http" "edgecenter_client" {
@@ -158,7 +175,7 @@ module "cdn" {
   source = "../edgecenter-relay-prosto/modules/edgecenter-cdn"
 
   cname             = local.hosts
-  origin_source     = var.origin_source
+  origin_source     = "${local.origin_host}:${var.origin_port}"
   origin_protocol   = "HTTP"
   origin_group_name = "u-survey hub-production"
   relay_secret_key  = var.relay_secret_key
@@ -166,6 +183,8 @@ module "cdn" {
   ssl_cert_id       = edgecenter_cdn_sslcert.le.id
   ssl_enabled       = true
   ssl_automated     = false
+
+  depends_on = [cloudflare_dns_record.origin]
 
   cached_rules = [{
     name           = "Static content"
