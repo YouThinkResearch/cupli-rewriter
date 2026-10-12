@@ -5,6 +5,8 @@ import { fetchViaIP, resolveIPv4 } from './happy-fetch'
 import { lookupIPWithCache } from './ip-lookup'
 import { log } from './logger'
 import { renderRetryPage } from './retry-page'
+import { recordRequest, statusOutcome } from './stats'
+import { serveStats, STATS_PREFIX } from './stats-page'
 import { clearSubmission, isStorableSubmission, loadSubmission, storeSubmission, Submission, SURVEY_PATH_REGEX } from './survey-session'
 
 const SESSION_COOKIE_NAME = '_rw_sid'
@@ -251,13 +253,20 @@ export default async function handleRequest(request: Request, config: Configurat
 
   if (!fwdHost || !fwdIP || !fwdHost.endsWith(config.proxyHost)) {
     log.warn('request rejected: missing forwarded headers', { fwdHost, ip: fwdIP })
+    recordRequest({ outcome: 'rejected' })
     return new Response('Not found', { status: 404 })
   }
+
+  // Ops page, answered locally and never proxied or counted.
+  const requestPath = new URL(request.url).pathname
+  if (requestPath === STATS_PREFIX || requestPath.startsWith(`${STATS_PREFIX}/`))
+    return serveStats(requestPath, new URL(request.url))
 
   const targetHost = unserializeHost(fwdHost, config.proxyHost, config.rewrittenHosts)
 
   if (!targetHost) {
     log.warn('request rejected: unknown host', { fwdHost, ip: fwdIP })
+    recordRequest({ outcome: 'rejected' })
     return new Response('Not found', { status: 404 })
   }
 
@@ -508,6 +517,7 @@ export default async function handleRequest(request: Request, config: Configurat
       totalMs: Date.now() - requestStart,
       error: lastError instanceof Error ? `${lastError.name}: ${lastError.message}` : String(lastError),
     })
+    recordRequest({ outcome: 'failed', host: targetHost, totalMs: Date.now() - handlerStart, attempts: attempt })
 
     // Page navigations get an auto-retrying interstitial instead of a raw 502.
     // A failed POST is recoverable: the body was stored above, and the page's
@@ -536,6 +546,7 @@ export default async function handleRequest(request: Request, config: Configurat
 
   if (upstreamResp.status === 404) {
     reqLog.info('upstream 404', { targetHost, path: upstreamURL.pathname })
+    recordRequest({ outcome: 'notFound', host: targetHost, totalMs: Date.now() - handlerStart, upstreamMs, attempts: attempt })
     // sec-fetch-mode is never 'document' (that's a sec-fetch-dest value), so
     // this redirect previously never fired; isNavigation checks both headers.
     if (isNavigation)
@@ -677,6 +688,7 @@ export default async function handleRequest(request: Request, config: Configurat
     rewriteMs,
     totalMs: Date.now() - handlerStart,
   })
+  recordRequest({ outcome: statusOutcome(upstreamResp.status), host: targetHost, totalMs: Date.now() - handlerStart, upstreamMs, attempts: attempt })
 
   return new Response(responseBody, {
     status: upstreamResp.status,
