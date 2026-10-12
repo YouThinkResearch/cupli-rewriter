@@ -117,7 +117,7 @@ h1 { font-size: 18px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
 
 .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
 @media (max-width: 760px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-.card { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); padding: var(--pad); }
+.card { min-width: 0; background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); padding: var(--pad); }
 .kpi .label { color: var(--muted); font-size: 12px; font-weight: 500; }
 .kpi .value { font-size: 26px; font-weight: 600; letter-spacing: -0.02em; margin-top: 6px; }
 .kpi .meta { color: var(--muted); font-size: 12px; margin-top: 4px; }
@@ -127,7 +127,7 @@ h1 { font-size: 18px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
 .panel { margin-bottom: 12px; }
 .panel-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 14px; gap: 12px; flex-wrap: wrap; }
 .panel-head h2 { font-size: 13px; font-weight: 600; margin: 0; }
-.legend { display: flex; gap: 14px; color: var(--muted); font-size: 12px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; color: var(--muted); font-size: 12px; }
 .legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; vertical-align: 0; }
 
 .chart { position: relative; height: 160px; }
@@ -151,6 +151,9 @@ h1 { font-size: 18px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding: 0 0 10px; }
 td { padding: 10px 0; border-top: 1px solid var(--faint); }
+td:first-child { padding-right: 12px; }
+th:not(:first-child), td:not(:first-child) { white-space: nowrap; padding-left: 12px; }
+.table-scroll { overflow-x: auto; }
 th:not(:first-child), td:not(:first-child) { text-align: right; }
 
 .outcomes { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -161,10 +164,13 @@ footer { color: var(--muted); font-size: 12px; margin-top: 20px; }
 .loading { opacity: 0.6; transition-property: opacity; transition-duration: 150ms; }
 
 /* Staged entrance on first load only: sections in order, 100ms apart. */
-.enter { opacity: 0; translate: 0 8px; animation: in 300ms var(--ease-out) forwards; animation-delay: calc(var(--i, 0) * 100ms); }
-@keyframes in { to { opacity: 1; translate: 0 0; } }
+/* Visible by default; only the animation starts from hidden ("backwards" fill covers
+   the stagger delay). If animations never run, content is simply there. */
+.enter { animation: in 300ms var(--ease-out) backwards; animation-delay: calc(var(--i, 0) * 100ms); }
+@keyframes in { from { opacity: 0; translate: 0 8px; } }
 @media (prefers-reduced-motion: reduce) {
-  .enter { translate: none; animation-duration: 150ms; animation-delay: 0ms; }
+  .enter { animation-name: fade; animation-duration: 150ms; animation-delay: 0ms; }
+  @keyframes fade { from { opacity: 0; } }
   .chart rect, .seg .pill { transition-duration: 0ms; }
 }
 `
@@ -197,7 +203,7 @@ const APP_JS = String.raw`
   }
   var nf = new Intl.NumberFormat('en-US');
   function fmtN(n) { return nf.format(n || 0); }
-  function fmtMs(ms) { return ms == null ? '—' : ms >= 1000 ? (ms / 1000).toFixed(ms >= 10000 ? 0 : 1) + ' s' : ms + ' ms'; }
+  function fmtMs(ms) { return ms == null ? '—' : ms >= 1000 ? (ms / 1000).toFixed(ms >= 10000 ? 0 : 1) + '\u00a0s' : ms + '\u00a0ms'; }
   function fmtRate(r) { return r < 10 ? r.toFixed(1) : nf.format(Math.round(r)); }
   function fmtPct(x) { return (x * 100).toFixed(x > 0 && x < 0.001 ? 3 : 2) + '%'; }
   function fmtTime(t) { var d = new Date(t); return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
@@ -397,7 +403,7 @@ const APP_JS = String.raw`
 
     var rows = d.hosts.map(function (h) {
       return el('tr', null, [
-        el('td', { text: h.host }),
+        el('td', { text: h.host.replace(/\./g, '.\u200b') }),
         el('td', { class: 'num', text: fmtN(h.count) }),
         el('td', { class: 'num' + (h.failed ? ' bad' : ''), text: fmtN(h.failed) }),
         el('td', { class: 'num', text: fmtMs(h.avgMs) }),
@@ -406,7 +412,7 @@ const APP_JS = String.raw`
     root.appendChild(section(el('div', { class: 'card panel' }, [
       el('div', { class: 'panel-head' }, [el('h2', { text: 'By upstream' })]),
       rows.length
-        ? el('table', null, [el('thead', null, [el('tr', null, ['Upstream', 'Requests', 'Failed', 'Avg'].map(function (t) { return el('th', { text: t }); }))]), el('tbody', null, rows)])
+        ? el('div', { class: 'table-scroll' }, [el('table', null, [el('thead', null, [el('tr', null, ['Upstream', 'Requests', 'Failed', 'Avg'].map(function (t) { return el('th', { text: t }); }))]), el('tbody', null, rows)])])
         : el('div', { class: 'sub', text: 'No requests in this range yet.' }),
     ]), 5));
 
