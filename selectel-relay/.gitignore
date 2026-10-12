@@ -1,0 +1,7 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+*sa-key*.json
+*.pem
+id_*
+!keys/*.pub

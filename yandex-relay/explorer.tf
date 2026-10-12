@@ -96,13 +96,6 @@ resource "null_resource" "explorer" {
   }
 }
 
-resource "cloudflare_dns_record" "explorer" {
-  zone_id = var.cloudflare_zone_id
-  name    = var.explorer_host
-  type    = "A"
-  content = yandex_compute_instance.probe.network_interface.0.nat_ip_address
-  ttl     = 300
-  proxied = false
-}
+# explorer.u-survey.ru moved to selectel-relay/ (state rm'd here on 2026-10-12).
 
 output "explorer_url" { value = "https://${var.explorer_host}" }

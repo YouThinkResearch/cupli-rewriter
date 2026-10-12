@@ -1,0 +1,40 @@
+{
+  email ${acme_email}
+
+  # >>>CACHE  (stripped by apply.sh if the running caddy lacks the module)
+  # souin (caddyserver/cache-handler). Defaults are deliberately conservative:
+  # only what upstream marks cacheable is stored, and the rewriter now sets
+  # Cache-Control on static assets so those are what actually land here.
+  cache {
+    ttl ${cache_ttl}
+    stale ${cache_stale}
+    default_cache_control no-store
+  }
+  # <<<CACHE
+}
+
+${caddy_hosts} {
+  # stdout, not a file: the packaged unit sandboxes /var/log and Caddy refuses to
+  # start when it cannot open the log, which turned a cosmetic setting into an outage.
+  log {
+    output stdout
+    format json
+  }
+
+  cache # CACHE-LINE
+
+  reverse_proxy 127.0.0.1:3000 {
+    header_up X-Real-IP {remote_host}
+    header_up X-Forwarded-Host {host}
+  }
+}
+
+${explorer_host} {
+  log {
+    output stdout
+    format json
+  }
+
+  # No `cache` here: this is an authenticated dynamic app, not static assets.
+  reverse_proxy 127.0.0.1:${explorer_port}
+}

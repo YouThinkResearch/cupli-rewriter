@@ -195,18 +195,10 @@ module "cdn" {
 }
 
 # --- DNS ----------------------------------------------------------------------------
-resource "cloudflare_dns_record" "cdn" {
-  for_each = toset(var.aliases)
-
-  zone_id = var.zone_id
-  name    = "${each.value}.${var.proxy_host}"
-  type    = "CNAME"
-  content = local.edgecdn_cname
-  ttl     = 300
-  proxied = false
-
-  depends_on = [module.cdn]
-}
+# The four u-survey.ru names moved to selectel-relay/ on 2026-10-12 and point straight
+# at the Selectel VM - no CDN in front. This CDN resource is left in place only as a
+# rollback: re-adding CNAMEs to local.edgecdn_cname (after state rm in selectel-relay)
+# puts EdgeCenter -> hub-production back in front.
 
 output "edgecdn_cname" { value = local.edgecdn_cname }
 output "hosts" { value = local.hosts }

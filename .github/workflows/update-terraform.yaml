@@ -84,59 +84,45 @@ jobs:
       #   working-directory: edgecenter-relay-prosto
       #   run: terraform apply -input=false -auto-approve -var-file=configs/u-survey.tfvars
 
-  yandex-relay:
-    name: Terraform apply (yandex-relay, u-survey.ru)
-    # Manual dispatch only. The schedule above exists to renew the EdgeCenter ACME
-    # certificate in the job above; this relay's certs are Caddy's own (HTTP-01, see
-    # files/apply.sh) and renew themselves, so the cron buys this job nothing. What it
-    # did buy was two unattended prod rebuilds (2026-09-10, 2026-09-20), both from a
-    # boot image lookup resolving to a newer image. Deploy with `gh workflow run`.
+  # yandex-relay/ died with Yandex ru-central1-a on 2026-10-11; the relay now lives
+  # on Selectel. Manual-only, like the Yandex job was: an apply rewrites live config.
+  selectel-relay:
+    name: Terraform apply (selectel-relay, u-survey.ru)
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     env:
       TF_IN_AUTOMATION: "true"
-      TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      TF_VAR_relay_secret_key: ${{ secrets.RELAY_SECRET_KEY }}
-      # s3explorer has no defaults for these, so an apply without them just fails
+      TF_VAR_selectel_api_token: ${{ secrets.SELECTEL_API_TOKEN }}
+      TF_VAR_cloudflare_api_key: ${{ secrets.CLOUDFLARE_CUPLI_API_KEY }}
+      TF_VAR_cloudflare_email: ${{ secrets.CLOUDFLARE_CUPLI_EMAIL }}
       TF_VAR_explorer_password: ${{ secrets.EXPLORER_APP_PASSWORD }}
       TF_VAR_explorer_session_secret: ${{ secrets.EXPLORER_SESSION_SECRET }}
-      TF_VAR_sa_key_file: ${{ github.workspace }}/yc-sa-key.json
-      # Public keys live in the repo (yandex-relay/keys/); only the private half is secret.
       TF_VAR_ssh_private_key: ${{ github.workspace }}/id_relay
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
       # null_resource.deploy builds the bundle with `bun build.ts` before pushing it.
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
-
       - name: Install rewriter dependencies
         working-directory: rewriter
         run: bun install --frozen-lockfile
-
       - name: Materialise credentials
         run: |
-          printf '%s' '${{ secrets.YC_SA_KEY }}' > "$TF_VAR_sa_key_file"
           printf '%s\n' '${{ secrets.RELAY_SSH_PRIVATE_KEY }}' > "$TF_VAR_ssh_private_key"
-          chmod 600 "$TF_VAR_sa_key_file" "$TF_VAR_ssh_private_key"
-
+          chmod 600 "$TF_VAR_ssh_private_key"
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: latest
-
       - name: Terraform init
-        working-directory: yandex-relay
+        working-directory: selectel-relay
         run: terraform init -input=false
-
       - name: Terraform apply
-        working-directory: yandex-relay
+        working-directory: selectel-relay
         run: terraform apply -input=false -auto-approve
-
       - name: Scrub credentials
         if: always()
-        run: rm -f "$TF_VAR_sa_key_file" "$TF_VAR_ssh_private_key"
+        run: rm -f "$TF_VAR_ssh_private_key"
