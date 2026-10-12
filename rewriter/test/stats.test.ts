@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { recordRequest, resetStats, snapshot, statusOutcome } from '../src/stats'
+import type { StatsStore } from '../src/stats'
+import { flushStats, loadStats, recordRequest, resetStats, snapshot, statusOutcome } from '../src/stats'
 import { serveStats } from '../src/stats-page'
 
 describe('stats', () => {
@@ -22,17 +23,34 @@ describe('stats', () => {
     expect(s.failureRate).toBeCloseTo(0.1)
     expect(s.retried).toBe(1)
     expect(s.hosts[0]).toMatchObject({ host: 'survey.alchemer.com', count: 9, failed: 1 })
-    expect(s.latency.total.p50).toBe(400)
-    expect(s.latency.upstream.p50).toBe(380)
+    expect(s.latency.total.p50).toBeCloseTo(400, -1)
+    expect(Math.abs(s.latency.upstream.p50! - 380) / 380).toBeLessThanOrEqual(0.011)
     expect(s.series).toHaveLength(60)
   })
 
-  // Regression: a histogram reported every value as its bin edge (450 -> "500 ms").
-  it('reports exact percentiles, not bucket edges', () => {
-    for (const ms of [310, 420, 450, 470, 1180]) recordRequest({ outcome: 'ok', host: 'h', totalMs: ms })
-    const l = snapshot(60).latency.total
-    expect(l.p50).toBe(450)
-    expect(l.p90).toBe(1180)
+  // Regression: coarse 100ms bins reported every value as its bin edge (450 -> "500 ms").
+  // The log histogram must stay within ~1% across the whole range.
+  it('percentiles stay within 1% of the true value', () => {
+    for (const ms of [3, 47, 450, 1180, 9800, 61000]) {
+      resetStats()
+      recordRequest({ outcome: 'ok', host: 'h', totalMs: ms })
+      const p = snapshot(60).latency.total.p50!
+      expect(Math.abs(p - ms) / ms).toBeLessThanOrEqual(0.011)
+    }
+  })
+
+  // ~16k req/min is a real peak: recording and a 24h snapshot must stay cheap.
+  it('handles peak volume cheaply', () => {
+    const t0 = performance.now()
+    for (let i = 0; i < 200_000; i++) recordRequest({ outcome: 'ok', host: 'survey.alchemer.com', totalMs: 300 + (i % 900), upstreamMs: 290 + (i % 900) })
+    const t1 = performance.now()
+    const s = snapshot(1440)
+    const t2 = performance.now()
+    expect(s.requests).toBe(200_000)
+    expect(s.latency.total.p50!).toBeGreaterThan(700)
+    expect(s.latency.total.p50!).toBeLessThan(770)
+    expect(t1 - t0).toBeLessThan(1000)
+    expect(t2 - t1).toBeLessThan(500)
   })
 
   it('keeps ~60-96 points per range', () => {
@@ -50,5 +68,29 @@ describe('stats', () => {
     const js = serveStats('/.well-known/ip-stats/app.js', new URL('https://x'))
     expect(js.headers.get('content-type')).toContain('javascript')
     expect(serveStats('/.well-known/ip-stats/nope', new URL('https://x')).status).toBe(404)
+  })
+
+  // The user requirement: history must survive restarts and deploys.
+  it('survives a restart through the store', async () => {
+    const kv = new Map<string, string>()
+    const store: StatsStore = {
+      mget: async keys => keys.map(k => kv.get(k) ?? null),
+      set: async (k, v) => { kv.set(k, v) },
+      setnx: async (k, v) => { if (!kv.has(k)) kv.set(k, v); return kv.get(k)! },
+    }
+    for (let i = 0; i < 50; i++) recordRequest({ outcome: 'ok', host: 'survey.alchemer.com', totalMs: 500 + i, upstreamMs: 480 + i })
+    recordRequest({ outcome: 'failed', host: 'survey.alchemer.com', totalMs: 7000, attempts: 4 })
+    const before = snapshot(60)
+    await flushStats(store)
+
+    resetStats() // the "restart"
+    expect(snapshot(60).requests).toBe(0)
+
+    await loadStats(store)
+    const after = snapshot(60)
+    expect(after.requests).toBe(before.requests)
+    expect(after.outcomes).toEqual(before.outcomes)
+    expect(after.latency).toEqual(before.latency)
+    expect(after.hosts).toEqual(before.hosts)
   })
 })

@@ -5,6 +5,7 @@ import { CacheInterface } from './cache-interface'
 import { log } from './logger'
 import { LRUCache } from './lru-cache'
 import rewriteRequest from './rewrite-request'
+import { flushStats, loadStats, StatsStore } from './stats'
 
 export class BunLruCache implements CacheInterface {
   constructor(private readonly lru: LRUCache<string, any>) { }
@@ -49,6 +50,24 @@ export class BunRedisCache implements CacheInterface {
 const cache: CacheInterface = env.REDIS_URL
   ? new BunRedisCache(new RedisClient(env.REDIS_URL))
   : new BunLruCache(new LRUCache<string, any>(1000)) // in-memory fallback (dev/tests)
+
+// /.well-known/ip-stats history survives restarts and deploys via the same Redis.
+if (env.REDIS_URL) {
+  const redis = new RedisClient(env.REDIS_URL)
+  const store: StatsStore = {
+    mget: async keys => (await redis.send('MGET', keys)) as Array<string | null>,
+    set: async (key, value, ttl) => { await redis.send('SET', [key, value, 'EX', String(ttl)]) },
+    setnx: async (key, value) => {
+      await redis.send('SET', [key, value, 'NX'])
+      return (await redis.get(key)) ?? null
+    },
+  }
+  loadStats(store).catch(error => log.warn('stats load failed', { error: String(error) }))
+  const flush = () => flushStats(store).catch(error => log.warn('stats flush failed', { error: String(error) }))
+  setInterval(flush, 15_000)
+  for (const sig of ['SIGTERM', 'SIGINT'] as const)
+    process.once(sig, () => { flush().finally(() => process.exit(0)) })
+}
 
 if (!env.REDIS_URL)
   log.warn('REDIS_URL not set, using in-memory cache; survey sessions will not survive restarts')
