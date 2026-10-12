@@ -15,9 +15,10 @@ export type Outcome =
 
 const OUTCOMES: Outcome[] = ['ok', 'redirect', 'clientError', 'notFound', 'serverError', 'failed', 'rejected']
 
-// Upper bounds in ms. Percentiles are read back as the bucket's upper bound, which is
-// the honest answer for a histogram and plenty precise for an ops page.
-const LATENCY_BOUNDS = [25, 50, 75, 100, 150, 200, 300, 400, 500, 600, 700, 800, 1000, 1250, 1500, 2000, 3000, 5000, 7000, 10000, Infinity]
+// Exact latency samples per minute, not a histogram: bucketed percentiles snapped every
+// value to a bin edge ("500 ms" for anything in 401-500). Traffic is a few requests a
+// minute, so raw samples are cheap; the cap only bounds memory under a sudden flood.
+const MAX_SAMPLES_PER_MINUTE = 1000
 
 const MINUTES = 24 * 60
 
@@ -25,7 +26,7 @@ interface Bucket {
   minute: number
   outcomes: Record<Outcome, number>
   retried: number
-  total: number[]
+  total: number[] // latency samples, ms
   upstream: number[]
   hosts: Map<string, { count: number, failed: number, latencySum: number }>
 }
@@ -35,8 +36,8 @@ function emptyBucket(minute: number): Bucket {
     minute,
     outcomes: Object.fromEntries(OUTCOMES.map(o => [o, 0])) as Record<Outcome, number>,
     retried: 0,
-    total: Array.from({ length: LATENCY_BOUNDS.length }, () => 0),
-    upstream: Array.from({ length: LATENCY_BOUNDS.length }, () => 0),
+    total: [],
+    upstream: [],
     hosts: new Map(),
   }
 }
@@ -54,8 +55,9 @@ function bucketFor(now: number): Bucket {
   return fresh
 }
 
-function bin(ms: number) {
-  return LATENCY_BOUNDS.findIndex(b => ms <= b)
+function sample(into: number[], ms: number) {
+  if (into.length < MAX_SAMPLES_PER_MINUTE)
+    into.push(ms)
 }
 
 export function recordRequest(r: {
@@ -70,9 +72,9 @@ export function recordRequest(r: {
   if ((r.attempts ?? 1) > 1)
     b.retried++
   if (r.totalMs != null)
-    b.total[bin(r.totalMs)]++
+    sample(b.total, r.totalMs)
   if (r.upstreamMs != null)
-    b.upstream[bin(r.upstreamMs)]++
+    sample(b.upstream, r.upstreamMs)
   if (r.host) {
     const h = b.hosts.get(r.host) ?? { count: 0, failed: 0, latencySum: 0 }
     h.count++
@@ -95,21 +97,16 @@ export function statusOutcome(status: number): Outcome {
   return 'ok'
 }
 
-function percentile(hist: number[], q: number): number | null {
-  const n = hist.reduce((a, b) => a + b, 0)
-  if (!n)
+// Nearest-rank percentile over the raw samples.
+function percentile(samples: number[], q: number): number | null {
+  if (!samples.length)
     return null
-  let seen = 0
-  for (let i = 0; i < hist.length; i++) {
-    seen += hist[i]
-    if (seen >= n * q)
-      return Number.isFinite(LATENCY_BOUNDS[i]) ? LATENCY_BOUNDS[i] : LATENCY_BOUNDS[i - 1]
-  }
-  return null
+  const sorted = [...samples].sort((x, y) => x - y)
+  return sorted[Math.min(sorted.length - 1, Math.ceil(q * sorted.length) - 1)]
 }
 
-function addHist(into: number[], from: number[]) {
-  for (let i = 0; i < from.length; i++) into[i] += from[i]
+function addSamples(into: number[], from: number[]) {
+  for (const v of from) into.push(v)
 }
 
 // Points per range stay around 60-96 so the chart is legible at any range.
@@ -133,8 +130,8 @@ export function snapshot(rangeMinutes: number, now = Date.now()) {
         continue
       for (const o of OUTCOMES) point.outcomes[o] += b.outcomes[o]
       point.retried += b.retried
-      addHist(point.total, b.total)
-      addHist(point.upstream, b.upstream)
+      addSamples(point.total, b.total)
+      addSamples(point.upstream, b.upstream)
       for (const [host, h] of b.hosts) {
         const acc = hosts.get(host) ?? { count: 0, failed: 0, latencySum: 0 }
         acc.count += h.count
@@ -145,8 +142,8 @@ export function snapshot(rangeMinutes: number, now = Date.now()) {
     }
     for (const o of OUTCOMES) totals.outcomes[o] += point.outcomes[o]
     totals.retried += point.retried
-    addHist(totals.total, point.total)
-    addHist(totals.upstream, point.upstream)
+    addSamples(totals.total, point.total)
+    addSamples(totals.upstream, point.upstream)
 
     const o = point.outcomes
     series.push({

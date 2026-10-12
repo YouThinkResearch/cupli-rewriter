@@ -23,8 +23,16 @@ describe('stats', () => {
     expect(s.retried).toBe(1)
     expect(s.hosts[0]).toMatchObject({ host: 'survey.alchemer.com', count: 9, failed: 1 })
     expect(s.latency.total.p50).toBe(400)
-    expect(s.latency.upstream.p50).toBe(400)
+    expect(s.latency.upstream.p50).toBe(380)
     expect(s.series).toHaveLength(60)
+  })
+
+  // Regression: a histogram reported every value as its bin edge (450 -> "500 ms").
+  it('reports exact percentiles, not bucket edges', () => {
+    for (const ms of [310, 420, 450, 470, 1180]) recordRequest({ outcome: 'ok', host: 'h', totalMs: ms })
+    const l = snapshot(60).latency.total
+    expect(l.p50).toBe(450)
+    expect(l.p90).toBe(1180)
   })
 
   it('keeps ~60-96 points per range', () => {
