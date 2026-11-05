@@ -55,14 +55,15 @@ ${explorer_host} {
   }
 }
 
-# Traefik on hub-production routes on the public Host and holds certs for these names
-# (apps/yt/certificate.yaml), so SNI follows the Host too.
+# SNI stays origin.youthink.io and Traefik routes on the Host header. Do NOT set SNI per
+# request ({host}): the five names share one pooled HTTP/2 connection, Traefik routes it by
+# the SNI it was opened with, and tracker/backend requests landed on the frontend
+# (2026-11-05: CORS preflights to tracker failed, panel session events stopped).
 youthink.io, www.youthink.io, backend.youthink.io, router.youthink.io, tracker.youthink.io {
   import services_ip_only
   reverse_proxy https://origin.youthink.io {
-    transport http {
-      tls_server_name {host}
-    }
+    # Caddy rewrites Host to the upstream name for https upstreams; keep the public one.
+    header_up Host {host}
   }
 }
 
