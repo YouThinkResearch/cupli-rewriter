@@ -1,89 +1,11 @@
-name: Renew CDN certificate
+name: Terraform apply (selectel-relay)
 
+# The EdgeCenter jobs (edgecenter-relay, prosto, u-survey) were removed when the
+# EdgeCenter account was lost on 2026-11-05; their resources no longer exist.
 on:
-  schedule:
-    # “At 00:00 on Sunday.”
-    - cron: "0 0 * * 0"
-  # Allow manual trigger
   workflow_dispatch:
-  push:
-    branches: ["main"]
 
 jobs:
-  terraform:
-    name: Terraform apply (edgecenter-relay)
-    # BuildJet runners are faster alternatives to the default GitHub
-    # hosted runners. Feel free to pick a larger SKU if needed.
-    runs-on: ubuntu-latest
-    # Environment variables required by the Terraform configuration
-    env:
-      TF_IN_AUTOMATION: "true"
-      TF_VAR_edgecenter_api_token: ${{ secrets.EDGECENTER_API_TOKEN }}
-      TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      TF_VAR_railway_token: ${{ secrets.RAILWAY_TOKEN }}
-      TF_VAR_relay_secret_key: ${{ secrets.RELAY_SECRET_KEY }}
-      # Backend credentials
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-          cache: "npm"
-          cache-dependency-path: "rewriter/package-lock.json"
-
-      - name: Install rewriter dependencies
-        working-directory: rewriter
-        run: npm ci
-
-      - name: Build rewriter
-        working-directory: rewriter
-        run: npm run build
-
-      - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: latest
-
-      # Initialise Terraform with the remote backend
-      - name: Terraform init (relay)
-        working-directory: edgecenter-relay
-        run: terraform init -input=false
-
-      # Perform the apply to renew certificate / sync CDN config. If there are
-      # no changes, Terraform exits with 0 and does nothing.
-      - name: Terraform apply (relay)
-        working-directory: edgecenter-relay
-        run: terraform apply -input=false -auto-approve
-
-      # # Initialise Terraform with the remote backend
-      # - name: Terraform init (prosto)
-      #   working-directory: edgecenter-relay-prosto
-      #   run: terraform init -input=false -backend-config=configs/prostocupli.tfbackend -reconfigure
-
-      # # Perform the apply to renew certificate / sync CDN config. If there are
-      # # no changes, Terraform exits with 0 and does nothing.
-      # - name: Terraform apply (prosto)
-      #   working-directory: edgecenter-relay-prosto
-      #   run: terraform apply -input=false -auto-approve -var-file=configs/prostocupli.tfvars
-
-      # u-survey.ru moved off EdgeCenter to the Yandex Cloud Moscow relay (yandex-relay/).
-      # These steps are kept, disabled, as the rollback path: re-enable them and the
-      # config repoints the DNS at the EdgeCenter CDN and renews its certificate.
-      # Do NOT run them alongside the yandex-relay job - both own the same DNS records.
-      # - name: Terraform init (usurvey)
-      #   working-directory: edgecenter-relay-prosto
-      #   run: terraform init -input=false -backend-config=configs/u-survey.tfbackend -reconfigure
-      #
-      # - name: Terraform apply (usurvey)
-      #   working-directory: edgecenter-relay-prosto
-      #   run: terraform apply -input=false -auto-approve -var-file=configs/u-survey.tfvars
-
   # yandex-relay/ died with Yandex ru-central1-a on 2026-10-11; the relay now lives
   # on Selectel. Manual-only, like the Yandex job was: an apply rewrites live config.
   selectel-relay:
