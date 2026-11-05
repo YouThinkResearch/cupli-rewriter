@@ -38,3 +38,58 @@ ${explorer_host} {
   # No `cache` here: this is an authenticated dynamic app, not static assets.
   reverse_proxy 127.0.0.1:${explorer_port}
 }
+
+# --- Services moved off EdgeCenter (lost 2026-11-05), all proxying to hetzner origins.
+# They answer only on the second floating IP (31.129.59.118 -> 192.168.60.200); u-survey
+# keeps 87.228.17.105. A per-site `bind` cannot coexist with the shared *:443 listener,
+# and swapping that listener needs a Caddy restart (= u-survey outage), so the split is
+# enforced on the local address instead. No `cache`: souin is unbounded and shares the
+# 900M cap with the u-survey proxy.
+(services_ip_only) {
+  @not_services_ip not expression `{http.request.local.host} == "192.168.60.200"`
+  abort @not_services_ip
+
+  log {
+    output stdout
+    format json
+  }
+}
+
+# Traefik on hub-production routes on the public Host and holds certs for these names
+# (apps/yt/certificate.yaml), so SNI follows the Host too.
+youthink.io, www.youthink.io, backend.youthink.io, router.youthink.io, tracker.youthink.io {
+  import services_ip_only
+  reverse_proxy https://origin.youthink.io {
+    transport http {
+      tls_server_name {host}
+    }
+  }
+}
+
+# The origin nginx rejects requests without the relay secret (apps/oprosio/web.yaml).
+# OPROS_RELAY_SECRET comes from caddy.service.d/opros-relay-secret.conf on the box.
+opros.io, www.opros.io {
+  import services_ip_only
+  reverse_proxy https://origin.opros.io {
+    header_up Host opros.io
+    header_up x-relay-secret-key {$OPROS_RELAY_SECRET}
+  }
+}
+
+# The istio gateway only trusts X-Forwarded-For when this header matches its EnvoyFilter
+# (istio-system/ingress-trusted-xff), which is what antifraud keys the client IP on.
+hub.ru.youthink.io {
+  import services_ip_only
+  reverse_proxy https://hub.youthink.io {
+    header_up Host hub.youthink.io
+    # Rotated 2026-11-05; HUB_RELAY_SECRET comes from caddy.service.d/hub-relay-secret.conf.
+    header_up x-relay-secret-key {$HUB_RELAY_SECRET}
+  }
+}
+
+sentry.ru.youthink.io {
+  import services_ip_only
+  reverse_proxy https://sentry.youthink.dev {
+    header_up Host sentry.youthink.dev
+  }
+}
