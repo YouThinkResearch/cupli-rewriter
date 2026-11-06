@@ -76,6 +76,24 @@ journalctl --vacuum-size=200M >/dev/null 2>&1 || true
 rm -f /var/log/syslog.[0-9] /var/log/syslog.[0-9].gz
 : > /var/log/syslog 2>/dev/null || true
 
+# Both fixed IPs, pinned. The port holds .190 (relay floating IP: u-survey + SSH) and
+# .200 (services floating IP), but DHCP hands eth0 only ONE of them. On 2026-11-05 this
+# file pinned just .200, DHCP then leased .200 as well, .190 vanished, and u-survey and
+# SSH went dark on 2026-11-06. Written only: never `netplan apply` here, it can bounce
+# eth0. Bring a missing address up live instead.
+install -d -m 0755 /etc/netplan
+cat > /etc/netplan/60-migrated-services-ip.yaml <<'NETPLAN'
+network:
+  version: 2
+  ethernets:
+    eth0:
+      addresses: [192.168.60.190/24, 192.168.60.200/24]
+NETPLAN
+chmod 600 /etc/netplan/60-migrated-services-ip.yaml
+for a in 192.168.60.190/24 192.168.60.200/24; do
+  ip -4 addr show dev eth0 | grep -qF "inet $a " || ip addr add "$a" dev eth0
+done
+
 install -m 0644 /tmp/rewriter.service /etc/systemd/system/rewriter.service
 install -m 0644 /tmp/Caddyfile        /etc/caddy/Caddyfile
 install -m 0644 /tmp/bun-handler.js   /opt/rewriter/bun-handler.js

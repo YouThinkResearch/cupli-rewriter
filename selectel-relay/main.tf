@@ -240,7 +240,8 @@ output "proxy_domains" { value = local.proxy_domains }
 # address with u-survey.ru. It maps to a second fixed IP, 192.168.60.200, added to
 # the existing port by hand (the port is only a data source here; a PUT listing
 # fixed_ips must keep .190 or u-survey goes dark). The OS side lives in
-# /etc/netplan/60-migrated-services-ip.yaml; Caddy binds those sites to .200.
+# /etc/netplan/60-migrated-services-ip.yaml, written by files/apply.sh, and it MUST list
+# both .190 and .200: DHCP leases only one of them. Caddy binds those sites to .200.
 import {
   to = openstack_networking_floatingip_v2.services
   id = "f8dc9f1c-0b7c-4187-90c7-a2a7a6a09069"
